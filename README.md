@@ -1,0 +1,24 @@
+# Strategic Commander
+
+An experimental native iPhone and iPad reimagining of the Palm OS space strategy game. Build factories and research facilities, send fleets between worlds, and defend your home planet. The interface adapts to the available screen and includes a battle replay inspired by the original.
+
+## Current status
+
+This is an early reconstruction. The economy, combat, map generation, and computer opponent are approximations rather than recovered original game logic. Multiplayer is not implemented. Artwork and gameplay continue to change.
+
+The repository contains the current work-in-progress source, including an unfinished inline fleet-order interface. It has not been verified as a finished build. The accompanying **0.1.0 build 12.1 IPA** is an earlier, completed device build with the `Strategic Cmd` Home Screen label; it does not contain the newer inline-controls source in this repository. The IPA is unsigned and needs to be signed or imported into a compatible sideloading environment. It requires iOS 17 or later.
+
+## Build the source
+
+Install Xcode and XcodeGen, then run:
+
+```sh
+xcodegen generate
+open StrategicCommander.xcodeproj
+```
+
+Choose an iOS simulator or configure your own development signing in Xcode. The project includes its app icon, fighter artwork, planet artwork, and UI tests in `Sources`, `Art`, and `UITests`.
+
+## Controls in the released IPA
+
+Select an owned planet and use **Send Ships**, or drag from an owned planet to a destination. Select a fleet size, launch it, and end the turn to advance travel. The turn report shows arrivals and battle results. Battles use an animated replay; long replays can be skipped.
