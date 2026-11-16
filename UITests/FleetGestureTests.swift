@@ -39,4 +39,18 @@ final class FleetGestureTests: XCTestCase {
         XCTAssertTrue(app.staticTexts["Sirius"].firstMatch.waitForExistence(timeout:5))
         XCTAssertTrue(app.buttons["END TURN"].waitForExistence(timeout:5))
     }
+    func testPortraitPanelCanCollapseAndExpand() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-ui-testing-reset"]
+        app.launch()
+        let expand = app.buttons["Expand planet panel"]
+        XCTAssertTrue(expand.waitForExistence(timeout:20))
+        expand.tap()
+        let collapse = app.buttons["Collapse planet panel"]
+        XCTAssertTrue(collapse.waitForExistence(timeout:5))
+        collapse.tap()
+        XCTAssertTrue(expand.waitForExistence(timeout:5))
+        XCTAssertTrue(app.buttons["planet-2"].isHittable)
+    }
+
 }

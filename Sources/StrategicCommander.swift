@@ -137,43 +137,69 @@ struct ContentView: View {
     @State private var launchNotice: String?
     @State private var dragSource: Int?
     @State private var dragPoint: CGPoint?
+    @State private var panelLevel = 1
     var p: Planet { g.s.planets.first(where: {$0.id == g.selected}) ?? g.s.planets[0] }
     var body: some View {
         GeometryReader { geo in
-            VStack(spacing:0) {
-                header
+            HStack(spacing: 0) {
                 if geo.size.width > 700 {
-                    HStack(spacing:0) { map.frame(maxWidth:.infinity,maxHeight:.infinity); Divider(); activePanel.frame(width:min(400,geo.size.width*0.38)) }
+                    HStack(spacing: 0) {
+                        map.frame(maxWidth: .infinity, maxHeight: .infinity)
+                        Divider()
+                        activePanel.frame(width: min(400, geo.size.width * 0.38))
+                    }
                 } else {
-                    VStack(spacing:0) { map.frame(maxWidth:.infinity,maxHeight:.infinity); Divider(); activePanel.frame(height:geo.size.height*0.50) }
+                    let heights = [min(86.0, geo.size.height * 0.16), geo.size.height * 0.43, geo.size.height * 0.78]
+                    let panelHeight = heights[panelLevel]
+                    ZStack(alignment: .bottom) {
+                        map.frame(maxWidth: .infinity, maxHeight: .infinity)
+                        VStack(spacing: 0) {
+                            panelHandle
+                            activePanel.frame(maxWidth: .infinity, maxHeight: .infinity)
+                        }
+                        .frame(height: panelHeight)
+                        .background(Color(red:0.06,green:0.09,blue:0.14))
+                        .clipShape(UnevenRoundedRectangle(topLeadingRadius: 16, topTrailingRadius: 16))
+                        .overlay(alignment: .top) { RoundedRectangle(cornerRadius: 1).fill(.white.opacity(0.12)).frame(height: 1) }
+                    }.animation(.easeInOut(duration: 0.22), value: panelLevel)
                 }
+                navigationRail
             }.background(Color(red:0.025,green:0.045,blue:0.08)).foregroundStyle(.white)
         }.alert("Start a new game?",isPresented:$confirmNew) { Button("Cancel",role:.cancel){}; Button("New Game",role:.destructive){g.newGame()} } message: { Text("Your current game will be replaced.") }
-
     }
-    var header: some View {
-        HStack(spacing: 12) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text("STRATEGIC COMMANDER").font(.system(size: 14, weight: .heavy, design: .rounded)).lineLimit(1).minimumScaleFactor(0.75)
-                Text("COMMAND THE STARS").font(.system(size: 9, weight: .bold)).foregroundStyle(.cyan)
-            }.layoutPriority(1)
-            Spacer(minLength: 4)
-            HStack(spacing: 12) {
+    var panelHandle: some View {
+        Button {
+            withAnimation { panelLevel = panelLevel == 2 ? 0 : 2 }
+        } label: {
+            Capsule().fill(.white.opacity(0.45)).frame(width: 42, height: 5)
+                .frame(maxWidth: .infinity).frame(height: 24).contentShape(Rectangle())
+        }.buttonStyle(.plain)
+        .accessibilityLabel(panelLevel == 2 ? "Collapse planet panel" : "Expand planet panel")
+        .highPriorityGesture(DragGesture(minimumDistance: 8).onEnded { value in
+            if value.translation.height < -20 { panelLevel = min(2, panelLevel + 1) }
+            else if value.translation.height > 20 { panelLevel = max(0, panelLevel - 1) }
+        })
+    }
+    var navigationRail: some View {
+        VStack(spacing: 14) {
+            Spacer(minLength: 0)
+            VStack(spacing: 10) {
                 headerStat("TURN", value: "\(g.s.turn)", color: .white)
                 headerStat("GOLD", value: g.s.gold[0].formatted(), color: .yellow)
                 headerStat("TECH", value: "\(g.s.tech[0])", color: .cyan)
             }
             Menu {
-                Button("How to play") { isOrdering = false; showReport = false; showGuide = true }
-                Button("Turn report") { isOrdering = false; showGuide = false; g.battles = []; showReport = true }
+                Button("How to play") { isOrdering = false; showReport = false; showGuide = true; panelLevel = 2 }
+                Button("Turn report") { isOrdering = false; showGuide = false; g.battles = []; showReport = true; panelLevel = 2 }
                 Button("New game", role: .destructive) { confirmNew = true }
-            } label: { Image(systemName: "ellipsis.circle").font(.title3).frame(width: 32, height: 40) }
-        }.padding(.horizontal, 14).padding(.vertical, 8).background(.black.opacity(0.25))
+            } label: { Image(systemName: "ellipsis").font(.headline).frame(width: 40, height: 40).background(.white.opacity(0.08), in: Circle()) }
+            Spacer(minLength: 0)
+        }.frame(width: 58).background(.black.opacity(0.7))
     }
     func headerStat(_ label: String, value: String, color: Color) -> some View {
-        VStack(alignment: .trailing, spacing: 2) {
-            Text(label).font(.system(size: 9, weight: .bold)).foregroundStyle(.white.opacity(0.65))
-            Text(value).font(.system(size: 15, weight: .bold, design: .rounded).monospacedDigit()).foregroundStyle(color).lineLimit(1).minimumScaleFactor(0.7)
+        VStack(alignment: .trailing, spacing: 1) {
+            Text(label).font(.system(size: 8, weight: .bold)).foregroundStyle(.white.opacity(0.65))
+            Text(value).font(.system(size: 14, weight: .bold, design: .rounded).monospacedDigit()).foregroundStyle(color).lineLimit(1)
         }.accessibilityElement(children: .ignore).accessibilityLabel("\(label) \(value)")
     }
     var map: some View {
@@ -182,7 +208,7 @@ struct ContentView: View {
             ZStack(alignment:.topLeading) {
                 Canvas { context,size in
                     for i in 0..<90 { let x = CGFloat((i*137)%997)/997*size.width, y = CGFloat((i*239+33)%991)/991*size.height; context.fill(Path(ellipseIn:CGRect(x:x,y:y,width:i%7 == 0 ? 2:1,height:i%7 == 0 ? 2:1)),with:.color(.white.opacity(0.35))) }
-                    for f in g.s.fleets { if let a = g.s.planets.first(where:{$0.id == f.source}), let b = g.s.planets.first(where:{$0.id == f.destination}) { var path = Path(); path.move(to:CGPoint(x:a.x*size.width,y:a.y*size.height)); path.addLine(to:CGPoint(x:b.x*size.width,y:b.y*size.height)); context.stroke(path,with:.color(f.owner == 0 ? .cyan.opacity(0.5) : .red.opacity(0.5)),style:StrokeStyle(lineWidth:1,dash:[4,4])) } }
+                    for f in g.s.fleets { if let a = g.s.planets.first(where:{$0.id == f.source}), let b = g.s.planets.first(where:{$0.id == f.destination}) { var path = Path(); path.move(to:mapPosition(a,width:size.width,height:size.height)); path.addLine(to:mapPosition(b,width:size.width,height:size.height)); context.stroke(path,with:.color(f.owner == 0 ? .cyan.opacity(0.5) : .red.opacity(0.5)),style:StrokeStyle(lineWidth:1,dash:[4,4])) } }
                 }
                 if let sourceID = dragSource, let end = dragPoint, let source = g.s.planets.first(where: { $0.id == sourceID }) {
                     Path { path in path.move(to: mapPosition(source, width:w, height:h)); path.addLine(to:end) }
@@ -191,14 +217,14 @@ struct ContentView: View {
                 }
                 ForEach(g.s.planets) { planet in
                     Button { selectPlanet(planet) } label: {
-                        VStack(spacing:2) { ZStack { Circle().fill(RadialGradient(colors:[color(planet).opacity(0.28),color(planet).opacity(0.03),.clear],center:.center,startRadius:0,endRadius:25)).frame(width:50,height:50); Image("Planet\(planet.id % 4)").resizable().aspectRatio(contentMode:.fit).frame(width:34,height:34).overlay(Circle().stroke(color(planet),lineWidth:2).frame(width:28,height:28)).overlay(Text(String(UnicodeScalar(65+planet.grade)!)).font(.system(size:10,weight:.black,design:.rounded)).foregroundStyle(.white).shadow(color:.black,radius:2)); if planet.id == g.selected || planet.id == g.destination { Circle().stroke(.white,lineWidth:1.5).frame(width:31,height:31) } }; Text(planet.name).font(.system(size:10,weight:.semibold)).lineLimit(1).fixedSize(); if planet.owner == 0 { Text("\(planet.ships) ships").font(.system(size:8,weight:.medium)).foregroundStyle(.cyan.opacity(0.8)).fixedSize() } }.contentShape(Rectangle())
+                        VStack(spacing:2) { ZStack { Circle().fill(RadialGradient(colors:[color(planet).opacity(0.28),color(planet).opacity(0.03),.clear],center:.center,startRadius:0,endRadius:25)).frame(width:50,height:50); PlanetArtwork(id:planet.id, size:34).overlay(Circle().stroke(color(planet),lineWidth:2).frame(width:28,height:28)).overlay(Text(String(UnicodeScalar(65+planet.grade)!)).font(.system(size:10,weight:.black,design:.rounded)).foregroundStyle(.white).shadow(color:.black,radius:2)); if planet.id == g.selected || planet.id == g.destination { Circle().stroke(.white,lineWidth:1.5).frame(width:31,height:31) } }; Text(planet.name).font(.system(size:10,weight:.semibold)).lineLimit(1).fixedSize(); if planet.owner == 0 { Text("\(planet.ships) ships").font(.system(size:8,weight:.medium)).foregroundStyle(.cyan.opacity(0.8)).fixedSize() } }.frame(width:72,height:78,alignment:.top).contentShape(Rectangle())
                     }.buttonStyle(.plain).accessibilityIdentifier("planet-\(planet.id)")
-                    .position(mapPosition(planet,width:w,height:h))
+                    .position(x:mapPosition(planet,width:w,height:h).x,y:mapPosition(planet,width:w,height:h).y + 14)
                 }
                 if isOrdering, let destination = g.destination, let target = g.s.planets.first(where: { $0.id == destination }) {
                     Path { path in path.move(to:mapPosition(p,width:w,height:h)); path.addLine(to:mapPosition(target,width:w,height:h)) }.stroke(.cyan,style:StrokeStyle(lineWidth:2,dash:[5,4])).allowsHitTesting(false)
                 }
-                Text(isOrdering && g.destination == nil ? "TAP A DESTINATION ON THE MAP" : "TAP TO INSPECT  ·  DRAG FROM A BLUE WORLD TO SEND").font(.system(size:9,weight:.bold)).tracking(1).foregroundStyle(.white.opacity(0.55)).padding(12)
+
             }.coordinateSpace(name:"starMap").contentShape(Rectangle())
             .highPriorityGesture(DragGesture(minimumDistance:10,coordinateSpace:.named("starMap"))
                 .onChanged { value in
@@ -223,13 +249,13 @@ struct ContentView: View {
         return hypot(center.x-point.x,center.y-point.y) <= 55 ? planet : nil
     }
     func beginOrder(from source:Planet,to target:Planet) {
-        g.selected = source.id; showReport = false; showGuide = false
+        g.selected = source.id; showReport = false; showGuide = false; panelLevel = 2
         guard g.distance(source,target) <= Double(11+g.s.tech[0]) else { isOrdering = false; g.destination = nil; launchNotice = "\(target.name) is out of range. Research increases fleet range."; return }
         launchNotice = nil; g.destination = target.id; g.sendCount = max(1,source.ships/2); isOrdering = true
     }
     func selectPlanet(_ planet:Planet) {
         if isOrdering, planet.id != g.selected { beginOrder(from:p,to:planet); return }
-        g.selected = planet.id; g.destination = nil; isOrdering = false; showReport = false; showGuide = false; launchNotice = nil
+        g.selected = planet.id; g.destination = nil; isOrdering = false; showReport = false; showGuide = false; launchNotice = nil; if panelLevel == 0 { panelLevel = 1 }
     }
     var activePanel: some View {
         Group {
@@ -262,7 +288,7 @@ struct ContentView: View {
             Spacer(minLength:0)
         }.padding(14)
     }
-    func mapPosition(_ p: Planet, width: CGFloat, height: CGFloat) -> CGPoint { CGPoint(x:max(28,min(width-28,p.x*width)),y:max(30,min(height-28,p.y*height))) }
+    func mapPosition(_ p: Planet, width: CGFloat, height: CGFloat) -> CGPoint { CGPoint(x:max(38,min(width-38,p.x*width)),y:max(60,min(height-50,60+p.y*max(1,height-110)))) }
     func color(_ p: Planet) -> Color { p.owner == 0 ? .cyan : p.owner == 1 ? .red : .gray }
     var details: some View {
         VStack(spacing:0) {
@@ -287,11 +313,11 @@ struct ContentView: View {
                 }
                 if p.owner == 0 && g.s.result == nil {
                     HStack { Text("BUILDINGS").font(.system(size:10,weight:.bold)).tracking(1).foregroundStyle(.secondary); Spacer(); Text("\(p.industry+p.research) / \(p.capacity)").font(.caption.monospacedDigit()).foregroundStyle(.secondary) }
-                    BuildingSlots(planet:p)
                     HStack { Button("+ Factory · 200") {g.build(false)}.disabled(g.s.gold[0] < 200 || p.industry+p.research >= p.capacity); Button("+ Research · 250") {g.build(true)}.disabled(g.s.gold[0] < 250 || p.industry+p.research >= p.capacity) }.buttonStyle(.bordered).font(.caption)
+                    BuildingSlots(planet:p)
                     VStack(alignment:.leading,spacing:2) { HStack { Text("PRODUCTION MIX").font(.system(size:9,weight:.bold)).foregroundStyle(.secondary); Spacer(); Text("\(Int((1-p.shipPercent)*100))% GOLD  ·  \(Int(p.shipPercent*100))% SHIPS").font(.system(size:9,weight:.bold)).foregroundStyle(.cyan) }; HStack { Image(systemName:"diamond.fill").foregroundStyle(.yellow); Slider(value:Binding(get:{p.shipPercent},set:{v in if let i = g.s.planets.firstIndex(where:{$0.id == p.id}) {g.s.planets[i].shipPercent = v}})); Image(systemName:"paperplane.fill").foregroundStyle(.cyan) }.font(.caption) }
                     HStack { Text("\(p.industry) factories  ·  \(p.research) labs").font(.caption).foregroundStyle(.secondary); Spacer() }
-                    Button { g.destination = nil; g.sendCount = max(1,p.ships / 2); isOrdering = true } label: {
+                    Button { g.destination = nil; g.sendCount = max(1,p.ships / 2); isOrdering = true; panelLevel = 2 } label: {
                         Label("Send Ships", systemImage:"paperplane.fill").frame(maxWidth:.infinity).padding(.vertical,7)
                     }.buttonStyle(.borderedProminent).tint(.teal).disabled(p.ships == 0)
                     if p.ships == 0 { Text("Build a factory and end a turn to produce ships.").font(.caption).foregroundStyle(.secondary) }
@@ -310,8 +336,8 @@ struct ContentView: View {
                 }
                 if let result = g.s.result { Text(result).font(.headline).foregroundStyle(.yellow) }
             }.padding(.horizontal,14).padding(.bottom,10)
-            }.scrollIndicators(.visible)
-            Button { launchNotice = nil; g.endTurn(); showReport = true } label: { HStack { Spacer(); Text("END TURN").font(.subheadline.bold()); Image(systemName:"arrow.right"); Spacer() }.padding(7) }.buttonStyle(.borderedProminent).tint(.indigo).disabled(g.s.result != nil).padding(.horizontal,14).padding(.vertical,8)
+            }.scrollIndicators(.visible).id(p.id)
+            Button { launchNotice = nil; g.endTurn(); showReport = true; panelLevel = 2 } label: { HStack { Spacer(); Text("END TURN").font(.subheadline.bold()); Image(systemName:"arrow.right"); Spacer() }.padding(7) }.buttonStyle(.borderedProminent).tint(.indigo).disabled(g.s.result != nil).padding(.horizontal,14).padding(.vertical,8)
         }.background(Color(red:0.06,green:0.09,blue:0.14))
     }
     func stat(_ label:String,_ value:String) -> some View { VStack(alignment:.leading,spacing:3) { Text(label).font(.system(size:9,weight:.bold)).foregroundStyle(.secondary); Text(value).font(.subheadline.monospacedDigit().bold()) }.frame(maxWidth:.infinity,alignment:.leading).padding(8).background(.white.opacity(0.035),in:RoundedRectangle(cornerRadius:8)) }
@@ -503,11 +529,25 @@ struct ClassicBattleShip: Shape {
 
 }
 
+// Center the visible planet, not the uneven transparent canvas in the source art.
+struct PlanetArtwork: View {
+    let id: Int
+    let size: CGFloat
+    var body: some View {
+        let variant = id % 4
+        let horizontal: CGFloat = variant == 0 || variant == 2 ? -0.05 : 0.05
+        let vertical: CGFloat = variant < 2 ? -0.025 : 0.03
+        Image("Planet\(variant)").resizable().aspectRatio(contentMode:.fit)
+            .frame(width:size,height:size).scaleEffect(1.15)
+            .offset(x: size * horizontal, y: size * vertical)
+            .frame(width:size,height:size).clipped()
+    }
+}
 struct PlanetPortrait: View {
     let planet: Planet
     var body: some View {
         ZStack {
-            Image("Planet\(planet.id % 4)").resizable().aspectRatio(contentMode:.fit).frame(width:86,height:86)
+            PlanetArtwork(id:planet.id, size:86)
             if planet.home { Image(systemName:"crown.fill").font(.system(size:16)).foregroundStyle(.yellow).shadow(color:.black,radius:2).offset(y:3) }
         }.accessibilityLabel("Class \(String(UnicodeScalar(65+planet.grade)!)) planet")
     }
@@ -515,15 +555,15 @@ struct PlanetPortrait: View {
 struct BuildingSlots: View {
     let planet: Planet
     var body: some View {
-        LazyVGrid(columns:[GridItem(.adaptive(minimum:42,maximum:52),spacing:5)],alignment:.leading,spacing:5) {
+        LazyVGrid(columns:Array(repeating: GridItem(.fixed(34),spacing:4),count:5),alignment:.leading,spacing:5) {
             ForEach(0..<planet.capacity,id:\.self) { slot in
                 let factory = slot < planet.industry
                 let lab = slot >= planet.industry && slot < planet.industry + planet.research
                 VStack(spacing:3) {
                     Image(systemName: factory ? "building.2.fill" : lab ? "atom" : "plus").font(.system(size:15,weight:.bold)).foregroundStyle(factory ? Color.orange : lab ? Color.cyan : Color.white.opacity(0.18))
                     Text(factory ? "FACT" : lab ? "LAB" : "EMPTY").font(.system(size:7,weight:.bold)).foregroundStyle(.secondary)
-                }.frame(maxWidth:.infinity).frame(height:42).background(.white.opacity(factory || lab ? 0.08 : 0.025),in:RoundedRectangle(cornerRadius:6)).overlay(RoundedRectangle(cornerRadius:6).stroke(.white.opacity(0.08),lineWidth:1)).accessibilityLabel(factory ? "Factory" : lab ? "Research lab" : "Empty building slot")
+                }.frame(maxWidth:.infinity).frame(height:38).background(.white.opacity(factory || lab ? 0.08 : 0.025),in:RoundedRectangle(cornerRadius:6)).overlay(RoundedRectangle(cornerRadius:6).stroke(.white.opacity(0.08),lineWidth:1)) .accessibilityLabel(factory ? "Factory" : lab ? "Research lab" : "Empty building slot")
             }
-        }
+        }.frame(height: 81, alignment: .topLeading)
     }
 }
