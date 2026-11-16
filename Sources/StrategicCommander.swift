@@ -152,7 +152,29 @@ struct ContentView: View {
 
     }
     var header: some View {
-        HStack(spacing:12) { VStack(alignment:.leading,spacing:2) { Text("STRATEGIC COMMANDER").font(.system(size:15,weight:.heavy,design:.rounded)); Text("COMMAND THE STARS").font(.system(size:9,weight:.bold)).foregroundStyle(.cyan) }; Spacer(); VStack(alignment:.trailing) { Text("TURN \(g.s.turn)").font(.caption.bold()); Text("◆ \(g.s.gold[0])  ·  TECH \(g.s.tech[0])").font(.caption2.monospacedDigit()).foregroundStyle(.yellow) }; Menu { Button("How to play") {isOrdering = false; showReport = false; showGuide = true}; Button("Turn report") {isOrdering = false; showGuide = false; g.battles = []; showReport = true}; Button("New game",role:.destructive) {confirmNew = true} } label: { Image(systemName:"ellipsis.circle").font(.title3) } }.padding(.horizontal,16).padding(.vertical,10).background(.black.opacity(0.25))
+        HStack(spacing: 12) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("STRATEGIC COMMANDER").font(.system(size: 14, weight: .heavy, design: .rounded)).lineLimit(1).minimumScaleFactor(0.75)
+                Text("COMMAND THE STARS").font(.system(size: 9, weight: .bold)).foregroundStyle(.cyan)
+            }.layoutPriority(1)
+            Spacer(minLength: 4)
+            HStack(spacing: 12) {
+                headerStat("TURN", value: "\(g.s.turn)", color: .white)
+                headerStat("GOLD", value: g.s.gold[0].formatted(), color: .yellow)
+                headerStat("TECH", value: "\(g.s.tech[0])", color: .cyan)
+            }
+            Menu {
+                Button("How to play") { isOrdering = false; showReport = false; showGuide = true }
+                Button("Turn report") { isOrdering = false; showGuide = false; g.battles = []; showReport = true }
+                Button("New game", role: .destructive) { confirmNew = true }
+            } label: { Image(systemName: "ellipsis.circle").font(.title3).frame(width: 32, height: 40) }
+        }.padding(.horizontal, 14).padding(.vertical, 8).background(.black.opacity(0.25))
+    }
+    func headerStat(_ label: String, value: String, color: Color) -> some View {
+        VStack(alignment: .trailing, spacing: 2) {
+            Text(label).font(.system(size: 9, weight: .bold)).foregroundStyle(.white.opacity(0.65))
+            Text(value).font(.system(size: 15, weight: .bold, design: .rounded).monospacedDigit()).foregroundStyle(color).lineLimit(1).minimumScaleFactor(0.7)
+        }.accessibilityElement(children: .ignore).accessibilityLabel("\(label) \(value)")
     }
     var map: some View {
         GeometryReader { geo in
@@ -431,17 +453,46 @@ struct TurnReportView: View {
     func battleFighter(hit:Bool) -> some View {
         ZStack {
             if hit { Image(systemName:"burst.fill").font(.system(size:32)).foregroundStyle(.red).overlay(Image(systemName:"burst.fill").font(.system(size:15)).foregroundStyle(.yellow)) }
-            else { Image("ClassicFighter").resizable().interpolation(.high).aspectRatio(contentMode:.fit).frame(width:42,height:48) }
+            else { RemasteredFighter().frame(width:48,height:52) }
         }.frame(width:46,height:50)
     }
     func fleetMarker(title:String,count:Int,color:Color) -> some View {
         VStack(spacing:1) {
             HStack(spacing:3) {
-                VStack(spacing:1) { ForEach(0..<2,id:\.self) { _ in HStack(spacing:1) { ForEach(0..<2,id:\.self) { _ in Image("ClassicFighter").resizable().interpolation(.high).aspectRatio(contentMode:.fit).frame(width:13,height:14) } } } }
+                VStack(spacing:1) { ForEach(0..<2,id:\.self) { _ in HStack(spacing:1) { ForEach(0..<2,id:\.self) { _ in RemasteredFighter().frame(width:13,height:14) } } } }
                 Text("\(count)").font(.system(size:15,weight:.heavy,design:.monospaced)).foregroundStyle(.black)
             }
             Text(title).font(.system(size:8,weight:.bold)).foregroundStyle(color)
         }.accessibilityElement(children:.combine)
+    }
+}
+// Vector artwork stays crisp at both the battle and fleet-counter sizes.
+struct RemasteredFighter: View {
+    var body: some View {
+        Canvas { context, size in
+            let sx = size.width / 100, sy = size.height / 100
+            context.scaleBy(x: sx, y: sy)
+            func path(_ points: [(CGFloat, CGFloat)]) -> Path {
+                var p = Path(); p.move(to: CGPoint(x: points[0].0, y: points[0].1))
+                for point in points.dropFirst() { p.addLine(to: CGPoint(x: point.0, y: point.1)) }
+                p.closeSubpath(); return p
+            }
+            let silhouette = path([(8,39),(27,25),(29,6),(36,17),(45,32),(69,37),(80,52),(93,90),(58,80),(23,67),(8,53)])
+            context.fill(silhouette, with: .color(Color(red: 0.08, green: 0.10, blue: 0.13)))
+            context.stroke(silhouette, with: .color(.black), style: StrokeStyle(lineWidth: 3, lineJoin: .round))
+            let wing = path([(12,42),(30,29),(43,38),(70,48),(86,84),(57,74),(23,62),(12,51)])
+            context.fill(wing, with: .linearGradient(Gradient(colors: [Color(white: 0.86), Color(white: 0.48), Color(white: 0.23)]), startPoint: CGPoint(x: 12,y: 30), endPoint: CGPoint(x: 80,y: 83)))
+            context.stroke(wing, with: .color(Color(white: 0.15)), style: StrokeStyle(lineWidth: 2, lineJoin: .round))
+            let fin = path([(30,10),(42,34),(38,49),(30,39)])
+            context.fill(fin, with: .color(Color(white: 0.24)))
+            context.stroke(fin, with: .color(.black), style: StrokeStyle(lineWidth: 2, lineJoin: .round))
+            let canopy = path([(43,35),(65,40),(72,53),(56,51)])
+            context.fill(canopy, with: .linearGradient(Gradient(colors: [Color(white: 0.7),Color(white: 0.3)]), startPoint: CGPoint(x: 45,y: 35), endPoint: CGPoint(x: 67,y: 53)))
+            context.stroke(canopy, with: .color(.black.opacity(0.75)), style: StrokeStyle(lineWidth: 2, lineJoin: .round))
+            let light = path([(57,55),(68,57),(73,65),(63,65)])
+            context.fill(light, with: .color(Color(red: 1,green: 0.89,blue: 0.12)))
+            context.stroke(light, with: .color(Color(red: 0.37,green: 0.30,blue: 0.02)), style: StrokeStyle(lineWidth: 1.3, lineJoin: .round))
+        }.accessibilityHidden(true)
     }
 }
 struct ClassicBattleShip: Shape {
