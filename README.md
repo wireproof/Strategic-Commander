@@ -6,7 +6,7 @@ An experimental native iPhone and iPad reimagining of the Palm OS space strategy
 
 This is an early reconstruction. The economy, combat, map generation, and computer opponent are approximations rather than recovered original game logic. Multiplayer is not implemented. Artwork and gameplay continue to change.
 
-The repository contains the current work-in-progress source, including an unfinished inline fleet-order interface. It has not been verified as a finished build. The accompanying **0.1.0 build 12.1 IPA** is an earlier, completed device build with the `Strategic Cmd` Home Screen label; it does not contain the newer inline-controls source in this repository. The IPA is unsigned and needs to be signed or imported into a compatible sideloading environment. It requires iOS 17 or later.
+The repository contains the current work-in-progress source, including an unfinished inline fleet-order interface. It has not been verified as a finished build. The accompanying **0.1.0 build 12.2 IPA** is an earlier, completed device build with the `Strat Cmd` Home Screen label; it does not contain the newer inline-controls source in this repository. The IPA is unsigned and needs to be signed or imported into a compatible sideloading environment. It requires iOS 17 or later.
 
 ## Build the source
 
