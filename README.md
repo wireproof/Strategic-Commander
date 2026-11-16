@@ -6,7 +6,7 @@ An experimental native iPhone and iPad reimagining of the Palm OS space strategy
 
 This is an early reconstruction. The economy, combat, map generation, and computer opponent are approximations rather than recovered original game logic. Multiplayer is not implemented. Artwork and gameplay continue to change.
 
-The source and experimental **0.1.0 build 17** contain inline fleet orders, turn reports, a scalable fighter sprite, native toolbar controls, and an expandable portrait panel. Build 17 compiled and was installed on the developer's iPhone and iPad, but the previous build had a simulator battle-report test failure, and build 17 native-toolbar placement has not been visually verified. The unsigned IPA requires signing or a compatible sideloading environment, and iOS 17 or later.
+The source and experimental **0.1.0 build 18** contain inline fleet orders, turn reports, a scalable fighter sprite, native toolbar controls, map panning, and an expandable portrait panel. Build 18 compiled and was installed on the developer's iPhone and iPad, but the previous build had a simulator battle-report test failure, and build 18 map panning and panel gestures have not been verified. The unsigned IPA requires signing or a compatible sideloading environment, and iOS 17 or later.
 
 ## Build the source
 

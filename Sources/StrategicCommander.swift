@@ -138,6 +138,10 @@ struct ContentView: View {
     @State private var dragSource: Int?
     @State private var dragPoint: CGPoint?
     @State private var panelLevel = 1
+    @GestureState private var panelDrag: CGFloat = 0
+    @State private var mapOffset: CGSize = .zero
+    @State private var panStart: CGSize?
+    @State private var isPanning = false
     var p: Planet { g.s.planets.first(where: {$0.id == g.selected}) ?? g.s.planets[0] }
     var body: some View {
         NavigationStack {
@@ -150,12 +154,16 @@ struct ContentView: View {
                     }
                 } else {
                     let heights = [min(86.0, geo.size.height * 0.16), geo.size.height * 0.43, geo.size.height * 0.78]
-                    let panelHeight = heights[panelLevel]
+                    let panelHeight = min(heights[2], max(heights[0], heights[panelLevel] - panelDrag))
                     ZStack(alignment: .bottom) {
                         map.frame(maxWidth: .infinity, maxHeight: .infinity)
                         VStack(spacing: 0) {
-                            panelHandle
-                            activePanel.frame(maxWidth: .infinity, maxHeight: .infinity)
+                            panelHandle(heights: heights)
+                            if panelLevel == 0 && panelDrag >= 0 {
+                                HStack { Text(p.name).font(.headline); Spacer(); Text("Drag up for details").font(.caption).foregroundStyle(.secondary) }.padding(.horizontal,14).frame(maxWidth:.infinity,maxHeight:.infinity)
+                            } else {
+                                activePanel.frame(maxWidth: .infinity).frame(height: max(0, panelHeight - 32)).clipped()
+                            }
                         }
                         .frame(height: panelHeight)
                         .background(Color(red:0.06,green:0.09,blue:0.14))
@@ -185,18 +193,22 @@ struct ContentView: View {
         }
         }.alert("Start a new game?",isPresented:$confirmNew) { Button("Cancel",role:.cancel){}; Button("New Game",role:.destructive){g.newGame()} } message: { Text("Your current game will be replaced.") }
     }
-    var panelHandle: some View {
+    func panelHandle(heights: [CGFloat]) -> some View {
         Button {
-            withAnimation { panelLevel = panelLevel == 2 ? 0 : 2 }
+            withAnimation(.easeInOut(duration: 0.22)) { panelLevel = panelLevel == 2 ? 0 : 2 }
         } label: {
-            Capsule().fill(.white.opacity(0.45)).frame(width: 42, height: 5)
-                .frame(maxWidth: .infinity).frame(height: 24).contentShape(Rectangle())
+            Capsule().fill(.white.opacity(0.55)).frame(width: 42, height: 5)
+                .frame(maxWidth: .infinity).frame(height: 32).contentShape(Rectangle())
         }.buttonStyle(.plain)
         .accessibilityLabel(panelLevel == 2 ? "Collapse planet panel" : "Expand planet panel")
-        .highPriorityGesture(DragGesture(minimumDistance: 8).onEnded { value in
-            if value.translation.height < -20 { panelLevel = min(2, panelLevel + 1) }
-            else if value.translation.height > 20 { panelLevel = max(0, panelLevel - 1) }
-        })
+        .highPriorityGesture(DragGesture(minimumDistance: 6)
+            .updating($panelDrag) { value, state, _ in state = value.translation.height }
+            .onEnded { value in
+                let target = heights[panelLevel] - value.predictedEndTranslation.height
+                withAnimation(.easeInOut(duration: 0.22)) {
+                    panelLevel = heights.indices.min(by: { abs(heights[$0] - target) < abs(heights[$1] - target) }) ?? panelLevel
+                }
+            })
     }
     var gameMenu: some View {
         Menu {
@@ -237,25 +249,34 @@ struct ContentView: View {
             }.coordinateSpace(name:"starMap").contentShape(Rectangle())
             .highPriorityGesture(DragGesture(minimumDistance:10,coordinateSpace:.named("starMap"))
                 .onChanged { value in
-                    guard g.s.result == nil else { return }
-                    if dragSource == nil, let start = nearestPlanet(to:value.startLocation,width:w,height:h), start.owner == 0, start.ships > 0 { dragSource = start.id }
+                    if dragSource == nil && !isPanning {
+                        if g.s.result == nil, let start = nearestPlanet(to:value.startLocation,width:w,height:h, radius:28), start.owner == 0, start.ships > 0 {
+                            dragSource = start.id
+                        } else {
+                            isPanning = true
+                            panStart = mapOffset
+                        }
+                    }
                     if dragSource != nil { dragPoint = value.location }
+                    else if isPanning, let base = panStart {
+                        mapOffset = CGSize(width:max(-w*0.45,min(w*0.45,base.width + value.translation.width)), height:max(-h*0.45,min(h*0.45,base.height + value.translation.height)))
+                    }
                 }
                 .onEnded { value in
-                    defer { dragSource = nil; dragPoint = nil }
-                    guard let sourceID = dragSource, let source = g.s.planets.first(where:{$0.id == sourceID}), let target = nearestPlanet(to:value.location,width:w,height:h), target.id != source.id else { return }
+                    defer { dragSource = nil; dragPoint = nil; isPanning = false; panStart = nil }
+                    guard let sourceID = dragSource, let source = g.s.planets.first(where:{$0.id == sourceID}), let target = nearestPlanet(to:value.location,width:w,height:h, radius:55), target.id != source.id else { return }
                     beginOrder(from:source,to:target)
                 })
         }.clipped()
     }
-    func nearestPlanet(to point:CGPoint,width:CGFloat,height:CGFloat) -> Planet? {
+    func nearestPlanet(to point:CGPoint,width:CGFloat,height:CGFloat, radius:CGFloat) -> Planet? {
         let closest = g.s.planets.min { a,b in
             let pa = mapPosition(a,width:width,height:height), pb = mapPosition(b,width:width,height:height)
             return hypot(pa.x-point.x,pa.y-point.y) < hypot(pb.x-point.x,pb.y-point.y)
         }
         guard let planet = closest else { return nil }
         let center = mapPosition(planet,width:width,height:height)
-        return hypot(center.x-point.x,center.y-point.y) <= 55 ? planet : nil
+        return hypot(center.x-point.x,center.y-point.y) <= radius ? planet : nil
     }
     func beginOrder(from source:Planet,to target:Planet) {
         g.selected = source.id; showReport = false; showGuide = false; panelLevel = 2
@@ -281,6 +302,7 @@ struct ContentView: View {
         }.padding(14)
     }
     var orderPanel: some View {
+        ScrollView {
         VStack(alignment:.leading,spacing:10) {
             HStack { Text("SEND SHIPS").font(.headline); Spacer(); Button("Cancel") {isOrdering = false; g.destination = nil} }
             HStack { Text("From \(p.name)").font(.subheadline.bold()); Spacer(); Text("\(p.ships) available").font(.caption).foregroundStyle(.secondary) }
@@ -294,10 +316,10 @@ struct ContentView: View {
             } else {
                 Spacer(); Label("Tap a destination on the map",systemImage:"hand.tap").font(.subheadline.bold()).foregroundStyle(.cyan); Text("Choose a world within range to set the fleet size.").font(.caption).foregroundStyle(.secondary); Spacer()
             }
-            Spacer(minLength:0)
         }.padding(14)
+        }.scrollIndicators(.visible)
     }
-    func mapPosition(_ p: Planet, width: CGFloat, height: CGFloat) -> CGPoint { CGPoint(x:max(38,min(width-38,p.x*width)),y:max(60,min(height-50,60+p.y*max(1,height-110)))) }
+    func mapPosition(_ p: Planet, width: CGFloat, height: CGFloat) -> CGPoint { CGPoint(x:max(38,min(width-38,p.x*width)) + mapOffset.width, y:max(60,min(height-50,60+p.y*max(1,height-110))) + mapOffset.height) }
     func color(_ p: Planet) -> Color { p.owner == 0 ? .cyan : p.owner == 1 ? .red : .gray }
     var details: some View {
         VStack(spacing:0) {
