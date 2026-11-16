@@ -26,4 +26,17 @@ final class FleetGestureTests: XCTestCase {
         XCTAssertTrue(report.waitForExistence(timeout:25)); report.tap()
         XCTAssertTrue(app.staticTexts.matching(NSPredicate(format:"label CONTAINS 'BATTLE AT Sirius'")).firstMatch.waitForExistence(timeout:5))
     }
+    func testTurnReportDoesNotBlockMap() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-ui-testing-reset"]
+        app.launch()
+        let end = app.buttons["END TURN"]
+        XCTAssertTrue(end.waitForExistence(timeout:20)); end.tap()
+        XCTAssertTrue(app.staticTexts["TURN 2"].firstMatch.waitForExistence(timeout:5))
+        let planet = app.buttons["planet-2"]
+        XCTAssertTrue(planet.isHittable, "Map must stay interactive while events are shown")
+        planet.tap()
+        XCTAssertTrue(app.staticTexts["Sirius"].firstMatch.waitForExistence(timeout:5))
+        XCTAssertTrue(app.buttons["END TURN"].waitForExistence(timeout:5))
+    }
 }

@@ -25,7 +25,8 @@ struct BattleReplay: Identifiable {
 }
 final class Game: ObservableObject {
     @Published var battles: [BattleReplay] = []
-    @Published var s: State { didSet { save() } }
+    @Published var s: State { didSet { if !isProcessingTurn { save() } } }
+    private var isProcessingTurn = false
     @Published var selected = 0
     @Published var destination: Int? = nil
     @Published var sendCount = 1
@@ -56,6 +57,8 @@ final class Game: ObservableObject {
     }
     func endTurn() {
         guard s.result == nil else { return }
+        isProcessingTurn = true
+        defer { isProcessingTurn = false; save() }
         var events: [String] = []
         var turnBattles: [BattleReplay] = []
         // Prototype economy and AI; values are approximations until verified against the original.
@@ -175,7 +178,7 @@ struct ContentView: View {
                 }
                 Text(isOrdering && g.destination == nil ? "TAP A DESTINATION ON THE MAP" : "TAP TO INSPECT  ·  DRAG FROM A BLUE WORLD TO SEND").font(.system(size:9,weight:.bold)).tracking(1).foregroundStyle(.white.opacity(0.55)).padding(12)
             }.coordinateSpace(name:"starMap").contentShape(Rectangle())
-            .simultaneousGesture(DragGesture(minimumDistance:10,coordinateSpace:.named("starMap"))
+            .highPriorityGesture(DragGesture(minimumDistance:10,coordinateSpace:.named("starMap"))
                 .onChanged { value in
                     guard g.s.result == nil else { return }
                     if dragSource == nil, let start = nearestPlanet(to:value.startLocation,width:w,height:h), start.owner == 0, start.ships > 0 { dragSource = start.id }
