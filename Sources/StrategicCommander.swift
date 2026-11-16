@@ -140,8 +140,8 @@ struct ContentView: View {
     @State private var panelLevel = 1
     var p: Planet { g.s.planets.first(where: {$0.id == g.selected}) ?? g.s.planets[0] }
     var body: some View {
+        NavigationStack {
         GeometryReader { geo in
-            HStack(spacing: 0) {
                 if geo.size.width > 700 {
                     HStack(spacing: 0) {
                         map.frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -163,8 +163,26 @@ struct ContentView: View {
                         .overlay(alignment: .top) { RoundedRectangle(cornerRadius: 1).fill(.white.opacity(0.12)).frame(height: 1) }
                     }.animation(.easeInOut(duration: 0.22), value: panelLevel)
                 }
-                navigationRail
-            }.background(Color(red:0.025,green:0.045,blue:0.08)).foregroundStyle(.white)
+        }.background(Color(red:0.025,green:0.045,blue:0.08)).foregroundStyle(.white)
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbarBackground(.hidden, for: .navigationBar)
+        .toolbar {
+            if #available(iOS 27.1, *) {
+                ToolbarItem(placement: .navigationBarTrailing) { headerStat("TURN", value: "\(g.s.turn)", color: .white) }.axisBehavior(.verticalPreferred)
+                ToolbarItem(placement: .navigationBarTrailing) { headerStat("GOLD", value: g.s.gold[0].formatted(), color: .yellow) }.axisBehavior(.verticalPreferred)
+                ToolbarItem(placement: .navigationBarTrailing) { headerStat("TECH", value: "\(g.s.tech[0])", color: .cyan) }.axisBehavior(.verticalPreferred)
+                ToolbarItem(placement: .navigationBarTrailing) { gameMenu }.axisBehavior(.verticalPreferred)
+            } else {
+                ToolbarItem(placement: .navigationBarLeading) {
+                    HStack(spacing: 10) {
+                        headerStat("TURN", value: "\(g.s.turn)", color: .white)
+                        headerStat("GOLD", value: g.s.gold[0].formatted(), color: .yellow)
+                        headerStat("TECH", value: "\(g.s.tech[0])", color: .cyan)
+                    }
+                }
+                ToolbarItem(placement: .navigationBarTrailing) { gameMenu }
+            }
+        }
         }.alert("Start a new game?",isPresented:$confirmNew) { Button("Cancel",role:.cancel){}; Button("New Game",role:.destructive){g.newGame()} } message: { Text("Your current game will be replaced.") }
     }
     var panelHandle: some View {
@@ -180,21 +198,12 @@ struct ContentView: View {
             else if value.translation.height > 20 { panelLevel = max(0, panelLevel - 1) }
         })
     }
-    var navigationRail: some View {
-        VStack(spacing: 14) {
-            Spacer(minLength: 0)
-            VStack(spacing: 10) {
-                headerStat("TURN", value: "\(g.s.turn)", color: .white)
-                headerStat("GOLD", value: g.s.gold[0].formatted(), color: .yellow)
-                headerStat("TECH", value: "\(g.s.tech[0])", color: .cyan)
-            }
-            Menu {
-                Button("How to play") { isOrdering = false; showReport = false; showGuide = true; panelLevel = 2 }
-                Button("Turn report") { isOrdering = false; showGuide = false; g.battles = []; showReport = true; panelLevel = 2 }
-                Button("New game", role: .destructive) { confirmNew = true }
-            } label: { Image(systemName: "ellipsis").font(.headline).frame(width: 40, height: 40).background(.white.opacity(0.08), in: Circle()) }
-            Spacer(minLength: 0)
-        }.frame(width: 58).background(.black.opacity(0.7))
+    var gameMenu: some View {
+        Menu {
+            Button("How to play") { isOrdering = false; showReport = false; showGuide = true; panelLevel = 2 }
+            Button("Turn report") { isOrdering = false; showGuide = false; g.battles = []; showReport = true; panelLevel = 2 }
+            Button("New game", role: .destructive) { confirmNew = true }
+        } label: { Label("Game menu", systemImage: "ellipsis") }
     }
     func headerStat(_ label: String, value: String, color: Color) -> some View {
         VStack(alignment: .trailing, spacing: 1) {
