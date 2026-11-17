@@ -138,7 +138,6 @@ struct ContentView: View {
     @State private var dragSource: Int?
     @State private var dragPoint: CGPoint?
     @State private var panelLevel = 1
-    @GestureState private var panelDrag: CGFloat = 0
     @State private var mapOffset: CGSize = .zero
     @State private var panStart: CGSize?
     @State private var isPanning = false
@@ -154,22 +153,10 @@ struct ContentView: View {
                     }
                 } else {
                     let heights = [min(86.0, geo.size.height * 0.16), geo.size.height * 0.43, geo.size.height * 0.78]
-                    let panelHeight = min(heights[2], max(heights[0], heights[panelLevel] - panelDrag))
                     ZStack(alignment: .bottom) {
                         map.frame(maxWidth: .infinity, maxHeight: .infinity)
-                        VStack(spacing: 0) {
-                            panelHandle(heights: heights)
-                            if panelLevel == 0 && panelDrag >= 0 {
-                                HStack { Text(p.name).font(.headline); Spacer(); Text("Drag up for details").font(.caption).foregroundStyle(.secondary) }.padding(.horizontal,14).frame(maxWidth:.infinity,maxHeight:.infinity)
-                            } else {
-                                activePanel.frame(maxWidth: .infinity).frame(height: max(0, panelHeight - 32)).clipped()
-                            }
-                        }
-                        .frame(height: panelHeight)
-                        .background(Color(red:0.06,green:0.09,blue:0.14))
-                        .clipShape(UnevenRoundedRectangle(topLeadingRadius: 16, topTrailingRadius: 16))
-                        .overlay(alignment: .top) { RoundedRectangle(cornerRadius: 1).fill(.white.opacity(0.12)).frame(height: 1) }
-                    }.animation(.easeInOut(duration: 0.22), value: panelLevel)
+                        SlidingPlanetPanel(level: $panelLevel, heights: heights, planetName: p.name) { activePanel }
+                    }
                 }
         }.background(Color(red:0.025,green:0.045,blue:0.08)).foregroundStyle(.white)
         .navigationBarTitleDisplayMode(.inline)
@@ -192,23 +179,6 @@ struct ContentView: View {
             }
         }
         }.alert("Start a new game?",isPresented:$confirmNew) { Button("Cancel",role:.cancel){}; Button("New Game",role:.destructive){g.newGame()} } message: { Text("Your current game will be replaced.") }
-    }
-    func panelHandle(heights: [CGFloat]) -> some View {
-        Button {
-            withAnimation(.easeInOut(duration: 0.22)) { panelLevel = panelLevel == 2 ? 0 : 2 }
-        } label: {
-            Capsule().fill(.white.opacity(0.55)).frame(width: 42, height: 5)
-                .frame(maxWidth: .infinity).frame(height: 32).contentShape(Rectangle())
-        }.buttonStyle(.plain)
-        .accessibilityLabel(panelLevel == 2 ? "Collapse planet panel" : "Expand planet panel")
-        .highPriorityGesture(DragGesture(minimumDistance: 6)
-            .updating($panelDrag) { value, state, _ in state = value.translation.height }
-            .onEnded { value in
-                let target = heights[panelLevel] - value.predictedEndTranslation.height
-                withAnimation(.easeInOut(duration: 0.22)) {
-                    panelLevel = heights.indices.min(by: { abs(heights[$0] - target) < abs(heights[$1] - target) }) ?? panelLevel
-                }
-            })
     }
     var gameMenu: some View {
         Menu {
@@ -372,6 +342,54 @@ struct ContentView: View {
         }.background(Color(red:0.06,green:0.09,blue:0.14))
     }
     func stat(_ label:String,_ value:String) -> some View { VStack(alignment:.leading,spacing:3) { Text(label).font(.system(size:9,weight:.bold)).foregroundStyle(.secondary); Text(value).font(.subheadline.monospacedDigit().bold()) }.frame(maxWidth:.infinity,alignment:.leading).padding(8).background(.white.opacity(0.035),in:RoundedRectangle(cornerRadius:8)) }
+}
+
+
+// Keep drag state inside the panel so moving the handle does not invalidate the map.
+struct SlidingPlanetPanel<Content: View>: View {
+    @Binding var level: Int
+    let heights: [CGFloat]
+    let planetName: String
+    @ViewBuilder var content: () -> Content
+    @State private var drag: CGFloat = 0
+    @State private var isDragging = false
+
+    var body: some View {
+        let height = PanelMotion.height(level: level, translation: drag, heights: heights)
+        VStack(spacing: 0) {
+            handle
+            content().frame(maxWidth: .infinity).frame(height: max(0, height - 32)).clipped()
+                .opacity(level == 0 && !isDragging ? 0 : 1)
+                .overlay {
+                    if level == 0 && !isDragging {
+                        HStack { Text(planetName).font(.headline); Spacer(); Text("Drag up for details").font(.caption).foregroundStyle(.secondary) }.padding(.horizontal,14)
+                    }
+                }
+        }
+        .frame(height: height)
+        .background(Color(red:0.06,green:0.09,blue:0.14))
+        .clipShape(UnevenRoundedRectangle(topLeadingRadius: 16, topTrailingRadius: 16))
+        .overlay(alignment: .top) { Rectangle().fill(.white.opacity(0.12)).frame(height: 1) }
+    }
+    private var handle: some View {
+        Button {
+            withAnimation(.easeInOut(duration: 0.22)) { level = level == 2 ? 0 : 2 }
+        } label: {
+            Capsule().fill(.white.opacity(0.55)).frame(width: 42, height: 5)
+                .frame(maxWidth: .infinity).frame(height: 32).contentShape(Rectangle())
+        }.buttonStyle(.plain)
+        .accessibilityLabel(level == 2 ? "Collapse planet panel" : "Expand planet panel")
+        .highPriorityGesture(DragGesture(minimumDistance: 6, coordinateSpace: .global)
+            .onChanged { value in
+                var transaction = Transaction()
+                transaction.animation = nil
+                withTransaction(transaction) { isDragging = true; drag = value.translation.height }
+            }
+            .onEnded { value in
+                let target = PanelMotion.targetLevel(level: level, predictedTranslation: value.predictedEndTranslation.height, heights: heights)
+                withAnimation(.easeInOut(duration: 0.22)) { level = target; drag = 0; isDragging = false }
+            })
+    }
 }
 
 

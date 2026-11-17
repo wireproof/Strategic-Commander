@@ -53,4 +53,20 @@ final class FleetGestureTests: XCTestCase {
         XCTAssertTrue(app.buttons["planet-2"].isHittable)
     }
 
+    func testPanelHandleDragSnapsAndKeepsMapAvailable() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-ui-testing-reset"]
+        app.launch()
+        let handle = app.buttons["Expand planet panel"]
+        XCTAssertTrue(handle.waitForExistence(timeout:20))
+        let start = handle.coordinate(withNormalizedOffset: CGVector(dx:0.5,dy:0.5))
+        let down = start.withOffset(CGVector(dx:0,dy:220))
+        start.press(forDuration:0.1,thenDragTo:down)
+        XCTAssertTrue(app.buttons["planet-2"].isHittable)
+        let collapsedHandle = app.buttons["Expand planet panel"]
+        let collapsedStart = collapsedHandle.coordinate(withNormalizedOffset: CGVector(dx:0.5,dy:0.5))
+        collapsedStart.press(forDuration:0.1,thenDragTo:collapsedStart.withOffset(CGVector(dx:0,dy:-450)))
+        XCTAssertTrue(app.buttons["Collapse planet panel"].waitForExistence(timeout:5))
+    }
+
 }
