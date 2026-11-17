@@ -18,7 +18,7 @@ final class FleetGestureTests: XCTestCase {
         let app = XCUIApplication()
         app.launchArguments = ["-ui-testing-reset", "-ui-testing-battle"]
         app.launch()
-        let end = app.buttons["END TURN"]
+        let end = app.buttons["End Turn"]
         XCTAssertTrue(end.waitForExistence(timeout:20))
         end.tap()
         XCTAssertTrue(app.staticTexts["BATTLE AT SIRIUS"].waitForExistence(timeout:5))
@@ -30,14 +30,14 @@ final class FleetGestureTests: XCTestCase {
         let app = XCUIApplication()
         app.launchArguments = ["-ui-testing-reset"]
         app.launch()
-        let end = app.buttons["END TURN"]
+        let end = app.buttons["End Turn"]
         XCTAssertTrue(end.waitForExistence(timeout:20)); end.tap()
         XCTAssertTrue(app.staticTexts["TURN 2"].firstMatch.waitForExistence(timeout:5))
         let planet = app.buttons["planet-2"]
         XCTAssertTrue(planet.isHittable, "Map must stay interactive while events are shown")
         planet.tap()
         XCTAssertTrue(app.staticTexts["Sirius"].firstMatch.waitForExistence(timeout:5))
-        XCTAssertTrue(app.buttons["END TURN"].waitForExistence(timeout:5))
+        XCTAssertTrue(app.buttons["End Turn"].waitForExistence(timeout:5))
     }
     func testPortraitPanelCanCollapseAndExpand() {
         let app = XCUIApplication()

@@ -1,138 +1,5 @@
 import SwiftUI
 
-struct BattleSnapshot: Equatable { var attackers: Int; var defenders: Int }
-struct BattleReplay: Identifiable {
-    let id = UUID(); let planet: String; let attacker: Int; let snapshots: [BattleSnapshot]
-}
-final class Game: ObservableObject {
-    @Published var battles: [BattleReplay] = []
-    @Published var s: State { didSet { if !isProcessingTurn { save() } } }
-    private var isProcessingTurn = false
-    @Published var selected = 0
-    @Published var destination: Int? = nil
-    @Published var sendCount = 1
-    private let key = "strategic-commander-prototype-v1"
-    init() { if ProcessInfo.processInfo.arguments.contains("-ui-testing-reset") { UserDefaults.standard.removeObject(forKey:key) }; if let data = UserDefaults.standard.data(forKey:key), let state = try? JSONDecoder().decode(State.self, from:data) { s = state } else { s = .fresh() }
-        #if DEBUG
-        if ProcessInfo.processInfo.arguments.contains("-ui-testing-battle") {
-            s = .fresh(); s.planets[2].owner = 1; s.planets[2].ships = 3; s.planets[2].industry = 0
-            s.fleets = [Fleet(owner:0,source:0,destination:2,ships:50,turns:1)]
-        }
-        #endif
-    }
-    func save() { if let data = try? JSONEncoder().encode(s) { UserDefaults.standard.set(data, forKey:key) } }
-    func newGame(planetCount: Int) { s = .fresh(planetCount: planetCount); battles = []; selected = 0; destination = nil }
-    func build(_ research: Bool) {
-        guard s.result == nil, let i = s.planets.firstIndex(where: {$0.id == selected}), s.planets[i].owner == 0 else { return }
-        let price = research ? FacilityAccounting.labPrice : FacilityAccounting.factoryPrice
-        let planet = s.planets[i]
-        guard s.gold[0] >= price, planet.industry + planet.research < planet.capacity else { return }
-        var next = s
-        if research {
-            var costs = FacilityAccounting.costs(existing: planet.labCosts, count: planet.research, home: planet.home, research: true)
-            costs.append(price); next.planets[i].labCosts = costs; next.planets[i].research += 1
-        } else {
-            var costs = FacilityAccounting.costs(existing: planet.factoryCosts, count: planet.industry, home: planet.home, research: false)
-            costs.append(price); next.planets[i].factoryCosts = costs; next.planets[i].industry += 1
-        }
-        next.gold[0] -= price
-        s = next
-    }
-    func sellFacility(slot: Int) {
-        guard s.result == nil, let i = s.planets.firstIndex(where: {$0.id == selected}), s.planets[i].owner == 0 else { return }
-        let planet = s.planets[i]
-        guard slot >= 0 && slot < planet.industry + planet.research else { return }
-        var next = s
-        if slot < planet.industry {
-            let costs = FacilityAccounting.costs(existing: planet.factoryCosts, count: planet.industry, home: planet.home, research: false)
-            guard let sale = FacilityAccounting.sold(costs, index: slot) else { return }
-            next.planets[i].factoryCosts = sale.remaining; next.planets[i].industry -= 1; next.gold[0] += sale.refund
-        } else {
-            let costs = FacilityAccounting.costs(existing: planet.labCosts, count: planet.research, home: planet.home, research: true)
-            guard let sale = FacilityAccounting.sold(costs, index: slot - planet.industry) else { return }
-            next.planets[i].labCosts = sale.remaining; next.planets[i].research -= 1; next.gold[0] += sale.refund
-        }
-        s = next
-    }
-    func distance(_ a: Planet, _ b: Planet) -> Double { hypot((a.x-b.x)*28, (a.y-b.y)*28) }
-    func travel(_ a: Planet, _ b: Planet, owner: Int) -> Int { max(1, Int(ceil(distance(a,b) / Double(5+s.tech[owner])))) }
-    func send() {
-        guard s.result == nil, let dest = destination, let i = s.planets.firstIndex(where: {$0.id == selected}), let j = s.planets.firstIndex(where: {$0.id == dest}), s.planets[i].owner == 0, i != j, sendCount > 0, sendCount <= s.planets[i].ships, distance(s.planets[i],s.planets[j]) <= Double(11+s.tech[0]) else { return }
-        let turns = travel(s.planets[i],s.planets[j],owner:0)
-        s.planets[i].ships -= sendCount; s.fleets.append(Fleet(owner:0,source:selected,destination:dest,ships:sendCount,turns:turns)); destination = nil
-    }
-    func endTurn() {
-        guard s.result == nil else { return }
-        isProcessingTurn = true
-        defer { isProcessingTurn = false; save() }
-        var events: [String] = []
-        var turnBattles: [BattleReplay] = []
-        // Prototype economy and AI; values are approximations until verified against the original.
-        for i in s.planets.indices where s.planets[i].owner >= 0 {
-            let owner = s.planets[i].owner, p = s.planets[i]
-            let output = max(1, 8-p.grade/2)
-            s.planets[i].ships += Int(Double(p.industry * output) * p.shipPercent)
-            s.gold[owner] += Int(Double(p.industry * output * 8) * (1-p.shipPercent))
-            s.researchPoints[owner] += p.research
-        }
-        for owner in 0...1 where s.tech[owner] < 15 {
-            let threshold = (s.tech[owner]+1)*10
-            if s.researchPoints[owner] >= threshold { s.researchPoints[owner] -= threshold; s.tech[owner] += 1; events.append("\(owner == 0 ? "Your" : "Enemy") technology reached level \(s.tech[owner]).") }
-        }
-        // Prototype AI develops captured worlds and avoids sending duplicate fleets.
-        for i in s.planets.indices where s.planets[i].owner == 1 {
-            let p = s.planets[i]
-            if p.industry + p.research < p.capacity {
-                if p.industry == 0 && s.gold[1] >= 200 { s.gold[1] -= 200; s.planets[i].industry += 1 }
-                else if p.industry >= 2 && p.research == 0 && s.gold[1] >= 250 { s.gold[1] -= 250; s.planets[i].research += 1 }
-                else if s.gold[1] >= 200 { s.gold[1] -= 200; s.planets[i].industry += 1 }
-            }
-            let src = s.planets[i], reserve = src.home ? 10 : 3
-            guard src.ships > reserve + 4 else { continue }
-            let targets = s.planets.filter { target in
-                target.owner != 1 && distance(src,target) <= Double(11+s.tech[1]) &&
-                !s.fleets.contains(where: { $0.owner == 1 && $0.destination == target.id }) &&
-                (target.owner == -1 || src.ships - reserve > target.ships)
-            }
-            if let target = targets.min(by: { distance(src,$0) < distance(src,$1) }) {
-                let count = src.ships - reserve; s.planets[i].ships -= count
-                s.fleets.append(Fleet(owner:1,source:src.id,destination:target.id,ships:count,turns:travel(src,target,owner:1)))
-            }
-        }
-        for i in s.fleets.indices { s.fleets[i].turns -= 1 }
-        let arrivals = s.fleets.filter {$0.turns <= 0}; s.fleets.removeAll {$0.turns <= 0}
-        for f in arrivals {
-            guard let i = s.planets.firstIndex(where: {$0.id == f.destination}) else { continue }
-            let oldOwner = s.planets[i].owner, name = s.planets[i].name
-            if oldOwner == f.owner { s.planets[i].ships += f.ships; if f.owner == 0 { events.append("Reinforcements arrived at \(name): \(f.ships) ships joined the fleet.") }; continue }
-            if oldOwner == -1 { s.planets[i].owner = f.owner; s.planets[i].ships = f.ships; events.append("\(f.owner == 0 ? "You claimed" : "Enemy claimed") \(name) with \(f.ships) ships; the planet was unoccupied."); continue }
-            let initialDefenders = s.planets[i].ships
-            var attacking = f.ships, defending = initialDefenders
-            let chance = min(0.9,max(0.1,0.5 + Double(s.tech[f.owner]-s.tech[oldOwner])*0.0267))
-            var frames = [BattleSnapshot(attackers:attacking,defenders:defending)]
-            while attacking > 0 && defending > 0 {
-                if Double.random(in:0..<1) < chance { defending -= 1 } else { attacking -= 1 }
-                frames.append(BattleSnapshot(attackers:attacking,defenders:defending))
-            }
-            if initialDefenders > 0 { turnBattles.append(BattleReplay(planet:name,attacker:f.owner,snapshots:frames)) }
-            if attacking > 0 {
-                s.planets[i].owner = f.owner; s.planets[i].ships = attacking
-                if initialDefenders == 0 {
-                    events.append("\(f.owner == 0 ? "You captured" : "Enemy captured") undefended \(name) with \(attacking) ships. No battle was needed.")
-                } else {
-                    events.append("BATTLE AT \(name): \(f.owner == 0 ? "Your" : "Enemy") \(f.ships) ships attacked \(initialDefenders) defenders. \(f.owner == 0 ? "Victory" : "Planet lost"): \(attacking) attacking ships remain.")
-                }
-                if s.planets[i].home { s.result = f.owner == 0 ? "Victory!" : "Your home world has fallen." }
-            } else { s.planets[i].ships = defending; events.append("BATTLE AT \(name): \(f.owner == 0 ? "Your" : "Enemy") \(f.ships) ships attacked \(initialDefenders) defenders. \(f.owner == 0 ? "Attack defeated" : "Defense held"): \(defending) defending ships remain.") }
-        }
-        for f in s.fleets where f.owner == 0 {
-            let name = s.planets.first(where: { $0.id == f.destination })?.name ?? "destination"
-            events.append("Fleet to \(name): \(f.ships) ships arriving in \(f.turns) turn\(f.turns == 1 ? "" : "s").")
-        }
-        battles = turnBattles
-        s.turn += 1; s.events = events.isEmpty ? ["No major events this turn."] : events
-    }
-}
 @main struct StrategicCommanderApp: App { @StateObject var game = Game(); var body: some Scene { WindowGroup { ContentView().environmentObject(game).preferredColorScheme(.dark) } } }
 struct ContentView: View {
     @EnvironmentObject var g: Game
@@ -141,6 +8,7 @@ struct ContentView: View {
     @State private var isOrdering = false
     @State private var showGuide = false
     @State private var launchNotice: String?
+    @State private var facilityNotice: String?
     @State private var dragSource: Int?
     @State private var dragPoint: CGPoint?
     @State private var panelLevel = 1
@@ -166,7 +34,7 @@ struct ContentView: View {
                     let heights = [min(86.0, geo.size.height * 0.16), geo.size.height * 0.43, geo.size.height * 0.78]
                     ZStack(alignment: .bottom) {
                         map.frame(maxWidth: .infinity, maxHeight: .infinity)
-                        SlidingPlanetPanel(level: $panelLevel, heights: heights, planetName: p.name) { activePanel }
+                        SlidingPlanetPanel(level: $panelLevel, heights: heights, planetName: p.name, onInteraction: { cancelDraft() }) { activePanel }
                     }
                 }
         }.background(Color(red:0.025,green:0.045,blue:0.08)).foregroundStyle(.white)
@@ -193,18 +61,18 @@ struct ContentView: View {
     }
     var gameMenu: some View {
         Menu {
-            Button("How to play") { isOrdering = false; showReport = false; showGuide = true; panelLevel = 2 }
-            Button("Turn report") { isOrdering = false; showGuide = false; g.battles = []; showReport = true; panelLevel = 2 }
+            Button("How to play") { cancelDraft(); showReport = false; showGuide = true; panelLevel = 2 }
+            Button("Turn report") { cancelDraft(); showGuide = false; g.battles = []; showReport = true; panelLevel = 2 }
             Menu("Planets in next game: \(GalaxyLayout.normalizedCount(nextGamePlanetCount))") {
                 ForEach(GalaxyLayout.choices, id: \.self) { count in
-                    Button { nextGamePlanetCount = count } label: {
+                    Button { cancelDraft(); nextGamePlanetCount = count } label: {
                         if nextGamePlanetCount == count { Label("\(count) planets", systemImage: "checkmark") }
                         else { Text("\(count) planets") }
                     }
                 }
             }
-            Button("Reset map view") { withAnimation(.easeInOut(duration: 0.2)) { mapZoom = 1; mapOffset = .zero } }
-            Button("New game", role: .destructive) { confirmNew = true }
+            Button("Reset map view") { cancelDraft(); withAnimation(.easeInOut(duration: 0.2)) { mapZoom = 1; mapOffset = .zero } }
+            Button("New game", role: .destructive) { cancelDraft(); confirmNew = true }
         } label: { Label("Game menu", systemImage: "ellipsis") }
     }
     func headerStat(_ label: String, value: String, color: Color) -> some View {
@@ -220,7 +88,7 @@ struct ContentView: View {
                 Canvas { context,size in
                     for i in 0..<90 { let x = CGFloat((i*137)%997)/997*size.width, y = CGFloat((i*239+33)%991)/991*size.height; context.fill(Path(ellipseIn:CGRect(x:x,y:y,width:i%7 == 0 ? 2:1,height:i%7 == 0 ? 2:1)),with:.color(.white.opacity(0.35))) }
                     for f in g.s.fleets { if let a = g.s.planets.first(where:{$0.id == f.source}), let b = g.s.planets.first(where:{$0.id == f.destination}) { var path = Path(); path.move(to:mapPosition(a,width:size.width,height:size.height)); path.addLine(to:mapPosition(b,width:size.width,height:size.height)); context.stroke(path,with:.color(f.owner == 0 ? .cyan.opacity(0.5) : .red.opacity(0.5)),style:StrokeStyle(lineWidth:1,dash:[4,4])) } }
-                }
+                }.contentShape(Rectangle()).onTapGesture { cancelDraft() }
                 if let sourceID = dragSource, let end = dragPoint, let source = g.s.planets.first(where: { $0.id == sourceID }) {
                     Path { path in path.move(to: mapPosition(source, width:w, height:h)); path.addLine(to:end) }
                         .stroke(.cyan,style:StrokeStyle(lineWidth:2,dash:[6,4])).allowsHitTesting(false)
@@ -242,6 +110,7 @@ struct ContentView: View {
                 .onChanged { value in
                     guard !isZooming else { return }
                     if dragSource == nil && !isPanning {
+                        cancelDraft()
                         if g.s.result == nil, let start = nearestPlanet(to:value.startLocation,width:w,height:h, radius:28 * mapZoom), start.owner == 0, start.ships > 0 {
                             dragSource = start.id
                         } else {
@@ -263,6 +132,7 @@ struct ContentView: View {
             .simultaneousGesture(MagnifyGesture()
                 .onChanged { value in
                     if pinchStartZoom == nil {
+                        cancelDraft()
                         pinchStartZoom = mapZoom; pinchStartOffset = mapOffset; isZooming = true
                         dragSource = nil; dragPoint = nil; isPanning = false; panStart = nil
                     }
@@ -292,9 +162,13 @@ struct ContentView: View {
         guard g.distance(source,target) <= Double(11+g.s.tech[0]) else { isOrdering = false; g.destination = nil; launchNotice = "\(target.name) is out of range. Research increases fleet range."; return }
         launchNotice = nil; g.destination = target.id; g.sendCount = max(1,source.ships/2); isOrdering = true
     }
+    func cancelDraft() {
+        if isOrdering || g.destination != nil { isOrdering = false; g.destination = nil }
+    }
     func selectPlanet(_ planet:Planet) {
-        if isOrdering, planet.id != g.selected { beginOrder(from:p,to:planet); return }
-        g.selected = planet.id; g.destination = nil; isOrdering = false; showReport = false; showGuide = false; launchNotice = nil; if panelLevel == 0 { panelLevel = 1 }
+        cancelDraft()
+        g.selected = planet.id; showReport = false; showGuide = false; launchNotice = nil; facilityNotice = nil
+        if panelLevel == 0 { panelLevel = 1 }
     }
     var activePanel: some View {
         Group {
@@ -307,13 +181,13 @@ struct ContentView: View {
     var guidePanel: some View {
         VStack(alignment:.leading,spacing:12) {
             HStack { Text("HOW TO PLAY").font(.headline); Spacer(); Button("Back") {showGuide = false} }
-            ScrollView { Text("Capture the enemy home world while defending your own. Drag from one of your blue worlds to another world, choose how many ships to send, and launch. You can also tap Send Ships and select a destination on the map. End your turn to advance fleets. Build factories to produce ships or gold and labs to improve technology.").font(.subheadline).frame(maxWidth:.infinity,alignment:.leading) }
+            ScrollView { Text("Capture the enemy home world while defending your own. Drag from one of your blue worlds to another world, choose how many ships to send, and launch. Tap another world or move the map to discard an unfinished order. End your turn to advance fleets. Build factories to produce ships or gold and labs to improve technology.").font(.subheadline).frame(maxWidth:.infinity,alignment:.leading) }
         }.padding(14)
     }
     var orderPanel: some View {
         ScrollView {
         VStack(alignment:.leading,spacing:10) {
-            HStack { Text("SEND SHIPS").font(.headline); Spacer(); Button("Cancel") {isOrdering = false; g.destination = nil} }
+            Text("SEND SHIPS").font(.headline)
             HStack { Text("From \(p.name)").font(.subheadline.bold()); Spacer(); Text("\(p.ships) available").font(.caption).foregroundStyle(.secondary) }
             if let id = g.destination, let target = g.s.planets.first(where:{$0.id == id}) {
                 HStack { Text("To \(target.name)").font(.subheadline.bold()); Spacer(); Text("\(g.travel(p,target,owner:0)) turn(s)").font(.caption).foregroundStyle(.cyan) }
@@ -321,7 +195,7 @@ struct ContentView: View {
                 Slider(value:Binding(get:{Double(g.sendCount)},set:{g.sendCount = min(p.ships,Int($0.rounded()))}),in:1...Double(max(2,p.ships)),step:1).disabled(p.ships <= 1)
                 HStack { Button("Half") {g.sendCount = max(1,p.ships/2)}; Spacer(); Button("All ships") {g.sendCount = p.ships} }.font(.caption)
                 Button { let count = g.sendCount; let name = target.name; g.send(); isOrdering = false; launchNotice = "\(count) ships launched to \(name). End your turn to move them." } label: { Label("Launch Fleet to \(target.name)",systemImage:"paperplane.fill").frame(maxWidth:.infinity).padding(.vertical,6) }.buttonStyle(.borderedProminent).tint(.teal)
-                Text("Tap another world to change destination.").font(.caption).foregroundStyle(.secondary)
+                Text("Tap a world or move the map to discard this order.").font(.caption).foregroundStyle(.secondary)
             } else {
                 Spacer(); Label("Tap a destination on the map",systemImage:"hand.tap").font(.subheadline.bold()).foregroundStyle(.cyan); Text("Choose a world within range to set the fleet size.").font(.caption).foregroundStyle(.secondary); Spacer()
             }
@@ -336,17 +210,18 @@ struct ContentView: View {
     func color(_ p: Planet) -> Color { p.owner == 0 ? .cyan : p.owner == 1 ? .red : .gray }
     var details: some View {
         VStack(spacing:0) {
-            HStack(alignment:.firstTextBaseline) { Text("Strategic Commander").font(.title2.bold()).lineLimit(1).minimumScaleFactor(0.75); Spacer(); Text(p.owner == 0 ? "YOUR WORLD" : p.owner == 1 ? "ENEMY" : "UNCHARTED").font(.caption2.bold()).foregroundStyle(color(p)) }.padding(.horizontal,14).frame(height:52,alignment:.center)
             ScrollView {
             VStack(alignment:.leading,spacing:10) {
                 HStack(alignment:.center,spacing:16) {
                     PlanetPortrait(planet:p, size:110).frame(width:110,height:110)
-                    VStack(alignment:.leading,spacing:6) {
-                        HStack(spacing: 5) { Text(p.name).font(.headline.bold()); if p.home { Image(systemName:"crown.fill").foregroundStyle(.yellow) } }
-                        Text("CLASS \(String(UnicodeScalar(65+p.grade)!))").font(.subheadline.bold())
+                    VStack(alignment:.leading,spacing:5) {
+                        HStack(spacing:5) { Text(p.name).font(.headline.bold()); if p.home { Image(systemName:"crown.fill").foregroundStyle(.yellow) }; Spacer(); Text(p.owner == 0 ? "YOUR WORLD" : p.owner == 1 ? "ENEMY" : "UNCHARTED").font(.caption2.bold()).foregroundStyle(color(p)) }
+                        let production = PlanetProduction.calculate(p)
+                        Text("CLASS \(String(UnicodeScalar(65+p.grade)!)) · \(production.outputPerFactory) OUTPUT / FACTORY").font(.caption.bold())
                         Text("\(p.ships) ships in orbit").font(.subheadline.monospacedDigit())
+                        Text("+\(production.ships) ships · +\(production.gold) gold / turn").font(.caption.monospacedDigit()).foregroundStyle(.secondary)
+                        Text("+\(production.research) research / turn").font(.caption.monospacedDigit()).foregroundStyle(.secondary)
                     }
-                    Spacer(minLength:0)
                 }.frame(maxWidth:.infinity,alignment:.leading).padding(10).background(.white.opacity(0.035),in:RoundedRectangle(cornerRadius:12))
                 if p.owner == 0 {
                     let threshold = (g.s.tech[0]+1)*10
@@ -356,24 +231,24 @@ struct ContentView: View {
                     }
                 }
                 if p.owner == 0 && g.s.result == nil {
-                    HStack { Text("BUILDINGS").font(.system(size:10,weight:.bold)).tracking(1).foregroundStyle(.secondary); Spacer(); Text("\(p.industry+p.research) / \(p.capacity)").font(.caption.monospacedDigit()).foregroundStyle(.secondary) }
-                    BuildingSlots(planet:p, gold:g.s.gold[0], onBuild:{ g.build($0) }, onSell:{ g.sellFacility(slot:$0) })
-                    Text("Tap a facility to sell it for its construction cost.").font(.caption2).foregroundStyle(.secondary)
+                    HStack { Text("BUILDINGS").font(.system(size:10,weight:.bold)).tracking(1).foregroundStyle(.secondary); Spacer(); Text(facilityNotice ?? "\(p.industry+p.research) / \(p.capacity)").font(.caption.monospacedDigit()).foregroundStyle(.secondary) }
+                    BuildingSlots(planet:p, gold:g.s.gold[0], onBuild:{ g.build($0); facilityNotice = nil }, onSell:{ if let refund = g.sellFacility(slot:$0) { facilityNotice = "+\(refund) GOLD" } })
+                    Text("Tap a facility to sell it. FREE facilities return 0 gold.").font(.caption2).foregroundStyle(.secondary)
                     GeometryReader { row in
                         HStack(spacing:8) {
                             VStack(alignment:.leading,spacing:2) {
                                 HStack { Text("PRODUCTION MIX").font(.system(size:9,weight:.bold)).foregroundStyle(.secondary); Spacer(); Text("\(Int((1-p.shipPercent)*100))% GOLD · \(Int(p.shipPercent*100))% SHIPS").font(.system(size:9,weight:.bold)).foregroundStyle(.cyan).lineLimit(1).minimumScaleFactor(0.7) }
                                 HStack { Image(systemName:"diamond.fill").foregroundStyle(.yellow); Slider(value:Binding(get:{p.shipPercent},set:{v in if let i = g.s.planets.firstIndex(where:{$0.id == p.id}) {g.s.planets[i].shipPercent = v}})); Image(systemName:"paperplane.fill").foregroundStyle(.cyan) }.font(.caption)
                             }.frame(width:max(0,(row.size.width-8)*0.75))
-                            Button { g.destination = nil; g.sendCount = max(1,p.ships / 2); isOrdering = true; panelLevel = 2 } label: {
-                                VStack(spacing:3) { Image(systemName:"paperplane.fill"); Text("Send Ships").lineLimit(1).minimumScaleFactor(0.7) }.font(.caption.bold()).frame(maxWidth:.infinity).frame(height:52)
-                            }.buttonStyle(.borderedProminent).tint(.teal).disabled(p.ships == 0).accessibilityLabel("Send Ships")
+                            endTurnButton
                         }
                     }.frame(height:58)
                     if p.ships == 0 { Text("Build a factory and end a turn to produce ships.").font(.caption).foregroundStyle(.secondary) }
                     if let notice = launchNotice { Label(notice,systemImage:"checkmark.circle.fill").font(.caption).foregroundStyle(.green) }
 
-                } else if g.destination == nil { Text("Select one of your worlds to build or send ships.").font(.caption).foregroundStyle(.secondary) }
+                } else if g.s.result == nil {
+                    HStack { Text("Select one of your worlds to build or send ships.").font(.caption).foregroundStyle(.secondary); Spacer(); endTurnButton.frame(width:100) }
+                }
                 if !g.s.fleets.filter({$0.owner == 0}).isEmpty {
                     VStack(alignment:.leading,spacing:5) {
                         Text("FLEETS IN TRANSIT").font(.system(size:9,weight:.bold)).foregroundStyle(.secondary)
@@ -387,8 +262,12 @@ struct ContentView: View {
                 if let result = g.s.result { Text(result).font(.headline).foregroundStyle(.yellow) }
             }.padding(.horizontal,14).padding(.bottom,10)
             }.scrollIndicators(.visible).id(p.id)
-            Button { launchNotice = nil; g.endTurn(); showReport = true; panelLevel = 2 } label: { HStack { Spacer(); Text("END TURN").font(.subheadline.bold()); Image(systemName:"arrow.right"); Spacer() }.padding(7) }.buttonStyle(.borderedProminent).tint(.indigo).disabled(g.s.result != nil).padding(.horizontal,14).padding(.vertical,8)
         }.background(Color(red:0.06,green:0.09,blue:0.14))
+    }
+    var endTurnButton: some View {
+        Button { cancelDraft(); launchNotice = nil; facilityNotice = nil; g.endTurn(); showReport = true; panelLevel = 2 } label: {
+            VStack(spacing:3) { Image(systemName:"arrow.right"); Text("End Turn").lineLimit(1).minimumScaleFactor(0.7) }.font(.caption.bold()).frame(maxWidth:.infinity).frame(height:52)
+        }.buttonStyle(.borderedProminent).tint(.indigo).disabled(g.s.result != nil).accessibilityLabel("End Turn")
     }
     func stat(_ label:String,_ value:String) -> some View { VStack(alignment:.leading,spacing:3) { Text(label).font(.system(size:9,weight:.bold)).foregroundStyle(.secondary); Text(value).font(.subheadline.monospacedDigit().bold()) }.frame(maxWidth:.infinity,alignment:.leading).padding(8).background(.white.opacity(0.035),in:RoundedRectangle(cornerRadius:8)) }
 }
@@ -399,6 +278,7 @@ struct SlidingPlanetPanel<Content: View>: View {
     @Binding var level: Int
     let heights: [CGFloat]
     let planetName: String
+    let onInteraction: () -> Void
     @ViewBuilder var content: () -> Content
     @State private var drag: CGFloat = 0
     @State private var isDragging = false
@@ -422,6 +302,7 @@ struct SlidingPlanetPanel<Content: View>: View {
     }
     private var handle: some View {
         Button {
+            onInteraction()
             withAnimation(.easeInOut(duration: 0.22)) { level = level == 2 ? 0 : 2 }
         } label: {
             Capsule().fill(.white.opacity(0.6)).frame(width: 50, height: 6)
@@ -430,6 +311,7 @@ struct SlidingPlanetPanel<Content: View>: View {
         .accessibilityLabel(level == 2 ? "Collapse planet panel" : "Expand planet panel")
         .highPriorityGesture(DragGesture(minimumDistance: 6, coordinateSpace: .global)
             .onChanged { value in
+                if !isDragging { onInteraction() }
                 var transaction = Transaction()
                 transaction.animation = nil
                 withTransaction(transaction) { isDragging = true; drag = value.translation.height }
@@ -656,13 +538,17 @@ struct BuildingSlots: View {
     let gold: Int
     let onBuild: (Bool) -> Void
     let onSell: (Int) -> Void
-    private let columns = Array(repeating: GridItem(.fixed(48),spacing:5),count:6)
+    private let columns = [GridItem(.fixed(64),spacing:0), GridItem(.fixed(16),spacing:0)] + Array(repeating: GridItem(.fixed(64),spacing:6),count:5)
     var body: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
+        let factories = FacilityAccounting.costs(existing:planet.factoryCosts,count:planet.industry,home:planet.home,research:false)
+        let labs = FacilityAccounting.costs(existing:planet.labCosts,count:planet.research,home:planet.home,research:true)
+        let refunds = factories + labs
+        let order = FacilityAccounting.displayOrder(factoryCosts:factories,labCosts:labs)
+        ScrollView(.horizontal, showsIndicators: true) {
             LazyVGrid(columns:columns,alignment:.leading,spacing:5) {
-                ForEach(0..<12,id:\.self) { cell in
-                    let column = cell % 6
-                    let row = cell / 6
+                ForEach(0..<14,id:\.self) { cell in
+                    let column = cell % 7
+                    let row = cell / 7
                     if column == 0 {
                         let research = row == 1
                         let price = research ? FacilityAccounting.labPrice : FacilityAccounting.factoryPrice
@@ -672,32 +558,32 @@ struct BuildingSlots: View {
                             .disabled(gold < price || planet.industry + planet.research >= planet.capacity)
                             .opacity(gold < price || planet.industry + planet.research >= planet.capacity ? 0.45 : 1)
                             .accessibilityLabel("Build \(research ? "research lab" : "factory") for \(price) gold")
+                    } else if column == 1 {
+                        Color.clear.frame(width:16,height:64).accessibilityHidden(true)
                     } else {
-                        let slot = row * 5 + column - 1
-                        if slot < planet.capacity {
-                            let factory = slot < planet.industry
-                            let lab = slot >= planet.industry && slot < planet.industry + planet.research
-                            if factory || lab {
-                                let costs = FacilityAccounting.costs(existing:factory ? planet.factoryCosts : planet.labCosts, count:factory ? planet.industry : planet.research, home:planet.home, research:lab)
-                                let index = factory ? slot : slot - planet.industry
-                                let refund = costs[index]
+                        let position = row * 5 + column - 2
+                        if position < planet.capacity {
+                            if position < order.count {
+                                let slot = order[position]
+                                let factory = slot < planet.industry
+                                let refund = refunds[slot]
                                 Button { onSell(slot) } label: {
-                                    tile(icon:factory ? "building.2.fill" : "atom", title:factory ? "FACT" : "LAB", detail:nil, color:factory ? .orange : .cyan, active:true)
+                                    tile(icon:factory ? "building.2.fill" : "atom", title:factory ? "FACT" : "LAB", detail:refund == 0 ? "FREE" : "+\(refund)", color:factory ? .orange : .cyan, active:true)
                                 }.buttonStyle(.plain).accessibilityLabel("Sell \(factory ? "factory" : "research lab") for \(refund) gold")
                             } else {
                                 tile(icon:"plus", title:"EMPTY", detail:nil, color:.white.opacity(0.18), active:false).accessibilityLabel("Empty building slot")
                             }
-                        } else { Color.clear.frame(width:48,height:48).accessibilityHidden(true) }
+                        } else { Color.clear.frame(width:64,height:64).accessibilityHidden(true) }
                     }
                 }
-            }.frame(height:101,alignment:.topLeading)
+            }.frame(height:133,alignment:.topLeading)
         }
     }
     private func tile(icon:String,title:String,detail:String?,color:Color,active:Bool) -> some View {
-        VStack(spacing:1) {
-            Image(systemName:icon).font(.system(size:detail == nil ? 19 : 15,weight:.bold)).foregroundStyle(color)
-            Text(title).font(.system(size:7,weight:.bold)).foregroundStyle(.secondary)
-            if let detail = detail { Text(detail).font(.system(size:7,weight:.bold)).foregroundStyle(.yellow) }
-        }.frame(width:48,height:48).background(.white.opacity(active ? 0.08 : 0.025),in:RoundedRectangle(cornerRadius:6)).overlay(RoundedRectangle(cornerRadius:6).stroke(.white.opacity(0.08),lineWidth:1))
+        VStack(spacing:2) {
+            Image(systemName:icon).font(.system(size:detail == nil ? 28 : 25,weight:.bold)).foregroundStyle(color)
+            Text(title).font(.system(size:8,weight:.bold)).foregroundStyle(.secondary)
+            if let detail = detail { Text(detail).font(.system(size:8,weight:.bold)).foregroundStyle(.yellow) }
+        }.frame(width:64,height:64).background(.white.opacity(active ? 0.08 : 0.025),in:RoundedRectangle(cornerRadius:8)).overlay(RoundedRectangle(cornerRadius:8).stroke(.white.opacity(0.08),lineWidth:1))
     }
 }

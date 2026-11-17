@@ -15,6 +15,11 @@ enum FacilityAccounting {
         return (0..<count).map { !research && home && $0 < 2 ? 0 : price }
     }
 
+    static func displayOrder(factoryCosts: [Int], labCosts: [Int]) -> [Int] {
+        let refunds = factoryCosts + labCosts
+        return refunds.indices.filter { refunds[$0] > 0 } + refunds.indices.filter { refunds[$0] == 0 }
+    }
+
     static func sold(_ costs: [Int], index: Int) -> (remaining: [Int], refund: Int)? {
         guard costs.indices.contains(index) else { return nil }
         var remaining = costs
