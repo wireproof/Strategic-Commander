@@ -13,11 +13,14 @@ struct State: Codable {
     var gold = [600, 600]; var tech = [0, 0]; var researchPoints = [0, 0]
     var events = ["Build manufacturing and research, then send ships to claim worlds."]
     var result: String? = nil
-    static func fresh() -> State {
-        let names = ["Sol", "Vega", "Sirius", "Altair", "Deneb", "Rigel", "Arcturus", "Procyon", "Capella", "Spica", "Polaris", "Antares", "Aldebaran", "Bellatrix", "Regulus", "Orion"]
-        let points: [(Double,Double)] = [(0.11,0.18),(0.89,0.82),(0.31,0.12),(0.52,0.10),(0.76,0.19),(0.15,0.39),(0.37,0.35),(0.59,0.31),(0.84,0.42),(0.12,0.67),(0.34,0.59),(0.55,0.55),(0.73,0.66),(0.25,0.85),(0.48,0.82),(0.69,0.89)]
-        return State(planets: points.enumerated().map { i,p in Planet(id:i, name:names[i], x:p.0, y:p.1, owner:i < 2 ? i : -1, home:i < 2, ships:i < 2 ? 12 : 0, industry:i < 2 ? 2 : 0, research:0, capacity:5 + i % 5, grade:i % 8, shipPercent:0.7) })
+    static func fresh(planetCount: Int = 16) -> State {
+        let count = GalaxyLayout.normalizedCount(planetCount)
+        return State(planets: (0..<count).map { i in
+            let point = GalaxyLayout.position(index: i, count: count)
+            return Planet(id:i, name:GalaxyLayout.names[i], x:point.0, y:point.1, owner:i < 2 ? i : -1, home:i < 2, ships:i < 2 ? 12 : 0, industry:i < 2 ? 2 : 0, research:0, capacity:5 + i % 5, grade:i % 8, shipPercent:0.7)
+        })
     }
+
 }
 struct BattleSnapshot: Equatable { var attackers: Int; var defenders: Int }
 struct BattleReplay: Identifiable {
@@ -40,7 +43,7 @@ final class Game: ObservableObject {
         #endif
     }
     func save() { if let data = try? JSONEncoder().encode(s) { UserDefaults.standard.set(data, forKey:key) } }
-    func newGame() { s = .fresh(); battles = []; selected = 0; destination = nil }
+    func newGame(planetCount: Int) { s = .fresh(planetCount: planetCount); battles = []; selected = 0; destination = nil }
     func build(_ research: Bool) {
         guard s.result == nil, let i = s.planets.firstIndex(where: {$0.id == selected}), s.planets[i].owner == 0 else { return }
         let cost = research ? 250 : 200
@@ -138,6 +141,11 @@ struct ContentView: View {
     @State private var dragSource: Int?
     @State private var dragPoint: CGPoint?
     @State private var panelLevel = 1
+    @AppStorage("next-game-planet-count") private var nextGamePlanetCount = 16
+    @State private var mapZoom: CGFloat = 1
+    @State private var pinchStartZoom: CGFloat?
+    @State private var pinchStartOffset: CGSize = .zero
+    @State private var isZooming = false
     @State private var mapOffset: CGSize = .zero
     @State private var panStart: CGSize?
     @State private var isPanning = false
@@ -178,12 +186,21 @@ struct ContentView: View {
                 ToolbarItem(placement: .navigationBarTrailing) { gameMenu }
             }
         }
-        }.alert("Start a new game?",isPresented:$confirmNew) { Button("Cancel",role:.cancel){}; Button("New Game",role:.destructive){g.newGame()} } message: { Text("Your current game will be replaced.") }
+        }.alert("Start a new game?",isPresented:$confirmNew) { Button("Cancel",role:.cancel){}; Button("New Game",role:.destructive){g.newGame(planetCount: nextGamePlanetCount); mapOffset = .zero; mapZoom = 1; isOrdering = false; showReport = false; showGuide = false} } message: { Text("Your current game will be replaced with a \(GalaxyLayout.normalizedCount(nextGamePlanetCount))-planet game.") }
     }
     var gameMenu: some View {
         Menu {
             Button("How to play") { isOrdering = false; showReport = false; showGuide = true; panelLevel = 2 }
             Button("Turn report") { isOrdering = false; showGuide = false; g.battles = []; showReport = true; panelLevel = 2 }
+            Menu("Planets in next game: \(GalaxyLayout.normalizedCount(nextGamePlanetCount))") {
+                ForEach(GalaxyLayout.choices, id: \.self) { count in
+                    Button { nextGamePlanetCount = count } label: {
+                        if nextGamePlanetCount == count { Label("\(count) planets", systemImage: "checkmark") }
+                        else { Text("\(count) planets") }
+                    }
+                }
+            }
+            Button("Reset map view") { withAnimation(.easeInOut(duration: 0.2)) { mapZoom = 1; mapOffset = .zero } }
             Button("New game", role: .destructive) { confirmNew = true }
         } label: { Label("Game menu", systemImage: "ellipsis") }
     }
@@ -210,7 +227,8 @@ struct ContentView: View {
                     Button { selectPlanet(planet) } label: {
                         VStack(spacing:2) { ZStack { Circle().fill(RadialGradient(colors:[color(planet).opacity(0.28),color(planet).opacity(0.03),.clear],center:.center,startRadius:0,endRadius:25)).frame(width:50,height:50); PlanetArtwork(id:planet.id, size:34).overlay(Circle().stroke(color(planet),lineWidth:2).frame(width:28,height:28)).overlay(Text(String(UnicodeScalar(65+planet.grade)!)).font(.system(size:10,weight:.black,design:.rounded)).foregroundStyle(.white).shadow(color:.black,radius:2)); if planet.id == g.selected || planet.id == g.destination { Circle().stroke(.white,lineWidth:1.5).frame(width:31,height:31) } }; Text(planet.name).font(.system(size:10,weight:.semibold)).lineLimit(1).fixedSize(); if planet.owner == 0 { Text("\(planet.ships) ships").font(.system(size:8,weight:.medium)).foregroundStyle(.cyan.opacity(0.8)).fixedSize() } }.frame(width:72,height:78,alignment:.top).contentShape(Rectangle())
                     }.buttonStyle(.plain).accessibilityIdentifier("planet-\(planet.id)")
-                    .position(x:mapPosition(planet,width:w,height:h).x,y:mapPosition(planet,width:w,height:h).y + 14)
+                    .scaleEffect(mapZoom)
+                    .position(x:mapPosition(planet,width:w,height:h).x,y:mapPosition(planet,width:w,height:h).y + 14 * mapZoom)
                 }
                 if isOrdering, let destination = g.destination, let target = g.s.planets.first(where: { $0.id == destination }) {
                     Path { path in path.move(to:mapPosition(p,width:w,height:h)); path.addLine(to:mapPosition(target,width:w,height:h)) }.stroke(.cyan,style:StrokeStyle(lineWidth:2,dash:[5,4])).allowsHitTesting(false)
@@ -219,8 +237,9 @@ struct ContentView: View {
             }.coordinateSpace(name:"starMap").contentShape(Rectangle())
             .highPriorityGesture(DragGesture(minimumDistance:10,coordinateSpace:.named("starMap"))
                 .onChanged { value in
+                    guard !isZooming else { return }
                     if dragSource == nil && !isPanning {
-                        if g.s.result == nil, let start = nearestPlanet(to:value.startLocation,width:w,height:h, radius:28), start.owner == 0, start.ships > 0 {
+                        if g.s.result == nil, let start = nearestPlanet(to:value.startLocation,width:w,height:h, radius:28 * mapZoom), start.owner == 0, start.ships > 0 {
                             dragSource = start.id
                         } else {
                             isPanning = true
@@ -229,14 +248,31 @@ struct ContentView: View {
                     }
                     if dragSource != nil { dragPoint = value.location }
                     else if isPanning, let base = panStart {
-                        mapOffset = CGSize(width:max(-w*0.45,min(w*0.45,base.width + value.translation.width)), height:max(-h*0.45,min(h*0.45,base.height + value.translation.height)))
+                        let panLimit = max(0.45, mapZoom - 0.5)
+                        mapOffset = CGSize(width:max(-w*panLimit,min(w*panLimit,base.width + value.translation.width)), height:max(-h*panLimit,min(h*panLimit,base.height + value.translation.height)))
                     }
                 }
                 .onEnded { value in
                     defer { dragSource = nil; dragPoint = nil; isPanning = false; panStart = nil }
-                    guard let sourceID = dragSource, let source = g.s.planets.first(where:{$0.id == sourceID}), let target = nearestPlanet(to:value.location,width:w,height:h, radius:55), target.id != source.id else { return }
+                    guard !isZooming, let sourceID = dragSource, let source = g.s.planets.first(where:{$0.id == sourceID}), let target = nearestPlanet(to:value.location,width:w,height:h, radius:55 * mapZoom), target.id != source.id else { return }
                     beginOrder(from:source,to:target)
                 })
+            .simultaneousGesture(MagnifyGesture()
+                .onChanged { value in
+                    if pinchStartZoom == nil {
+                        pinchStartZoom = mapZoom; pinchStartOffset = mapOffset; isZooming = true
+                        dragSource = nil; dragPoint = nil; isPanning = false; panStart = nil
+                    }
+                    if let base = pinchStartZoom {
+                        let nextZoom = min(3, max(0.65, base * value.magnification))
+                        let anchor = CGPoint(x:value.startAnchor.x * w, y:value.startAnchor.y * h)
+                        let nextOffset = MapGeometry.zoomOffset(startOffset:pinchStartOffset, startZoom:base, newZoom:nextZoom, anchor:anchor, center:CGPoint(x:w/2,y:h/2))
+                        let limit = max(0.15, nextZoom - 0.5)
+                        mapZoom = nextZoom
+                        mapOffset = CGSize(width:max(-w*limit,min(w*limit,nextOffset.width)), height:max(-h*limit,min(h*limit,nextOffset.height)))
+                    }
+                }
+                .onEnded { _ in pinchStartZoom = nil; isZooming = false })
         }.clipped()
     }
     func nearestPlanet(to point:CGPoint,width:CGFloat,height:CGFloat, radius:CGFloat) -> Planet? {
@@ -289,17 +325,22 @@ struct ContentView: View {
         }.padding(14)
         }.scrollIndicators(.visible)
     }
-    func mapPosition(_ p: Planet, width: CGFloat, height: CGFloat) -> CGPoint { CGPoint(x:max(38,min(width-38,p.x*width)) + mapOffset.width, y:max(60,min(height-50,60+p.y*max(1,height-110))) + mapOffset.height) }
+    func mapPosition(_ p: Planet, width: CGFloat, height: CGFloat) -> CGPoint {
+        let x = max(38,min(width-38,p.x*width))
+        let y = max(60,min(height-50,60+p.y*max(1,height-110)))
+        return CGPoint(x:(x-width/2)*mapZoom+width/2+mapOffset.width, y:(y-height/2)*mapZoom+height/2+mapOffset.height)
+    }
     func color(_ p: Planet) -> Color { p.owner == 0 ? .cyan : p.owner == 1 ? .red : .gray }
     var details: some View {
         VStack(spacing:0) {
-            HStack(alignment:.firstTextBaseline) { Text(p.name).font(.title2.bold()); if p.home { Image(systemName:"crown.fill").foregroundStyle(.yellow) }; Spacer(); Text(p.owner == 0 ? "YOUR WORLD" : p.owner == 1 ? "ENEMY" : "UNCHARTED").font(.caption2.bold()).foregroundStyle(color(p)) }.padding(.horizontal,14).padding(.top,10).padding(.bottom,6)
+            HStack(alignment:.firstTextBaseline) { Text("Strategic Commander").font(.title2.bold()).lineLimit(1).minimumScaleFactor(0.75); Spacer(); Text(p.owner == 0 ? "YOUR WORLD" : p.owner == 1 ? "ENEMY" : "UNCHARTED").font(.caption2.bold()).foregroundStyle(color(p)) }.padding(.horizontal,14).padding(.top,10).padding(.bottom,6)
             ScrollView {
             VStack(alignment:.leading,spacing:10) {
                 HStack(alignment:.center,spacing:16) {
                     PlanetPortrait(planet:p).frame(width:86,height:86)
                     VStack(alignment:.leading,spacing:6) {
-                        Text("CLASS \(String(UnicodeScalar(65+p.grade)!))").font(.headline.bold())
+                        HStack(spacing: 5) { Text(p.name).font(.headline.bold()); if p.home { Image(systemName:"crown.fill").foregroundStyle(.yellow) } }
+                        Text("CLASS \(String(UnicodeScalar(65+p.grade)!))").font(.subheadline.bold())
                         Text("\(p.ships) ships in orbit").font(.subheadline.monospacedDigit())
                         Text("\(p.industry+p.research) / \(p.capacity) building slots").font(.caption).foregroundStyle(.secondary)
                     }
@@ -314,7 +355,7 @@ struct ContentView: View {
                 }
                 if p.owner == 0 && g.s.result == nil {
                     HStack { Text("BUILDINGS").font(.system(size:10,weight:.bold)).tracking(1).foregroundStyle(.secondary); Spacer(); Text("\(p.industry+p.research) / \(p.capacity)").font(.caption.monospacedDigit()).foregroundStyle(.secondary) }
-                    HStack { Button("+ Factory · 200") {g.build(false)}.disabled(g.s.gold[0] < 200 || p.industry+p.research >= p.capacity); Button("+ Research · 250") {g.build(true)}.disabled(g.s.gold[0] < 250 || p.industry+p.research >= p.capacity) }.buttonStyle(.bordered).font(.caption)
+                    HStack { Button("+ Factory · 200") {g.build(false)}.disabled(g.s.gold[0] < 200 || p.industry+p.research >= p.capacity); Button("+ Research · 250") {g.build(true)}.disabled(g.s.gold[0] < 250 || p.industry+p.research >= p.capacity) }.buttonStyle(.bordered).controlSize(.large).font(.subheadline)
                     BuildingSlots(planet:p)
                     VStack(alignment:.leading,spacing:2) { HStack { Text("PRODUCTION MIX").font(.system(size:9,weight:.bold)).foregroundStyle(.secondary); Spacer(); Text("\(Int((1-p.shipPercent)*100))% GOLD  ·  \(Int(p.shipPercent*100))% SHIPS").font(.system(size:9,weight:.bold)).foregroundStyle(.cyan) }; HStack { Image(systemName:"diamond.fill").foregroundStyle(.yellow); Slider(value:Binding(get:{p.shipPercent},set:{v in if let i = g.s.planets.firstIndex(where:{$0.id == p.id}) {g.s.planets[i].shipPercent = v}})); Image(systemName:"paperplane.fill").foregroundStyle(.cyan) }.font(.caption) }
                     HStack { Text("\(p.industry) factories  ·  \(p.research) labs").font(.caption).foregroundStyle(.secondary); Spacer() }
@@ -604,15 +645,15 @@ struct PlanetPortrait: View {
 struct BuildingSlots: View {
     let planet: Planet
     var body: some View {
-        LazyVGrid(columns:Array(repeating: GridItem(.fixed(34),spacing:4),count:5),alignment:.leading,spacing:5) {
+        LazyVGrid(columns:Array(repeating: GridItem(.fixed(48),spacing:5),count:5),alignment:.leading,spacing:5) {
             ForEach(0..<planet.capacity,id:\.self) { slot in
                 let factory = slot < planet.industry
                 let lab = slot >= planet.industry && slot < planet.industry + planet.research
                 VStack(spacing:3) {
-                    Image(systemName: factory ? "building.2.fill" : lab ? "atom" : "plus").font(.system(size:15,weight:.bold)).foregroundStyle(factory ? Color.orange : lab ? Color.cyan : Color.white.opacity(0.18))
-                    Text(factory ? "FACT" : lab ? "LAB" : "EMPTY").font(.system(size:7,weight:.bold)).foregroundStyle(.secondary)
-                }.frame(maxWidth:.infinity).frame(height:38).background(.white.opacity(factory || lab ? 0.08 : 0.025),in:RoundedRectangle(cornerRadius:6)).overlay(RoundedRectangle(cornerRadius:6).stroke(.white.opacity(0.08),lineWidth:1)) .accessibilityLabel(factory ? "Factory" : lab ? "Research lab" : "Empty building slot")
+                    Image(systemName: factory ? "building.2.fill" : lab ? "atom" : "plus").font(.system(size:19,weight:.bold)).foregroundStyle(factory ? Color.orange : lab ? Color.cyan : Color.white.opacity(0.18))
+                    Text(factory ? "FACT" : lab ? "LAB" : "EMPTY").font(.system(size:8,weight:.bold)).foregroundStyle(.secondary)
+                }.frame(maxWidth:.infinity).frame(height:48).background(.white.opacity(factory || lab ? 0.08 : 0.025),in:RoundedRectangle(cornerRadius:6)).overlay(RoundedRectangle(cornerRadius:6).stroke(.white.opacity(0.08),lineWidth:1)) .accessibilityLabel(factory ? "Factory" : lab ? "Research lab" : "Empty building slot")
             }
-        }.frame(height: 81, alignment: .topLeading)
+        }.frame(height: 101, alignment: .topLeading)
     }
 }
